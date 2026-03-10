@@ -22,6 +22,12 @@ The taskpane provides a configuration panel with:
 - API key + optional prefix
 - Temperature
 
+Model support:
+
+- The configuration can query available models from a derived `.../v1/model_list` endpoint.
+- You can refresh model list manually from the config panel.
+- You can always type a custom model, even if model list loading fails or the model is not listed.
+
 Settings are stored in Office roaming settings when available, with localStorage fallback.
 
 ## Current toolchain and key dependencies

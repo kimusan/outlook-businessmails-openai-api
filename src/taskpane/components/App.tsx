@@ -37,7 +37,7 @@ import {
   saveAiServiceConfig,
   validateAiServiceConfig,
 } from "../../shared/aiConfig";
-import { createChatCompletion } from "../../shared/aiClient";
+import { createChatCompletion, getModelListEndpoint, listAvailableModels } from "../../shared/aiClient";
 
 export interface AppProps {
   title: string;
@@ -148,6 +148,17 @@ export default function App(props: AppProps) {
   const [isConfigVisible, setIsConfigVisible] = React.useState<boolean>(
     () => validateAiServiceConfig(initialConfig) !== null
   );
+  const [availableModels, setAvailableModels] = React.useState<string[]>([]);
+  const [isLoadingModels, setIsLoadingModels] = React.useState<boolean>(false);
+  const [modelListError, setModelListError] = React.useState<string>("");
+  const [modelListInfo, setModelListInfo] = React.useState<string>("");
+  const modelListEndpointPreview = React.useMemo(() => {
+    try {
+      return getModelListEndpoint(config.endpoint || "https://example.com/v1/chat/completions");
+    } catch {
+      return "Enter a valid endpoint URL to preview model list URL.";
+    }
+  }, [config.endpoint]);
   const [tone, setTone] = React.useState<ToneOption>("neutral");
   const [formality, setFormality] = React.useState<FormalityOption>("balanced");
   const [length, setLength] = React.useState<LengthOption>("medium");
@@ -190,6 +201,28 @@ export default function App(props: AppProps) {
     return createChatCompletion(config, messages);
   };
 
+  const onRefreshModels = React.useCallback(async () => {
+    try {
+      setModelListError("");
+      setModelListInfo("");
+
+      if (!config.endpoint.trim()) {
+        setModelListError("Set endpoint first to fetch models.");
+        return;
+      }
+
+      setIsLoadingModels(true);
+      const models = await listAvailableModels(config);
+      setAvailableModels(models);
+      setModelListInfo(`Loaded ${models.length} models from API.`);
+    } catch (error) {
+      setAvailableModels([]);
+      setModelListError((error as Error).message);
+    } finally {
+      setIsLoadingModels(false);
+    }
+  }, [config]);
+
   const onSaveConfig = async () => {
     try {
       setIsSavingConfig(true);
@@ -200,6 +233,7 @@ export default function App(props: AppProps) {
 
       await saveAiServiceConfig(config);
       setStatus("Configuration saved.");
+      await onRefreshModels();
       setIsConfigVisible(false);
     } catch (error) {
       setError((error as Error).message);
@@ -379,10 +413,39 @@ export default function App(props: AppProps) {
               onChange={(_ev, value) => setConfig({ ...config, endpoint: value || "" })}
             />
             <TextField
-              label="Model"
+              label="Model list endpoint"
+              value={modelListEndpointPreview}
+              readOnly
+            />
+            <div className="taskpane-actions">
+              <DefaultButton onClick={onRefreshModels} disabled={isLoadingModels || !config.endpoint.trim()}>
+                {isLoadingModels ? "Loading models..." : "Refresh model list"}
+              </DefaultButton>
+            </div>
+            {availableModels.length > 0 && (
+              <Dropdown
+                label="Available models"
+                selectedKey={availableModels.includes(config.model) ? config.model : undefined}
+                placeholder="Select a model from API list (optional)"
+                options={availableModels.map((modelId) => ({ key: modelId, text: modelId }))}
+                onChange={(_ev, option) => option && setConfig({ ...config, model: String(option.key) })}
+              />
+            )}
+            <TextField
+              label="Model (custom or selected)"
               value={config.model}
               onChange={(_ev, value) => setConfig({ ...config, model: value || "" })}
             />
+            {modelListInfo && (
+              <MessageBar messageBarType={MessageBarType.info} isMultiline={false}>
+                {modelListInfo}
+              </MessageBar>
+            )}
+            {modelListError && (
+              <MessageBar messageBarType={MessageBarType.warning} isMultiline>
+                Unable to load model list: {modelListError}. You can still enter a custom model manually.
+              </MessageBar>
+            )}
             <Dropdown
               label="Authentication mode"
               selectedKey={config.authMode}
