@@ -83,6 +83,7 @@ This repo includes:
 What it does:
 
 - Uses the script folder as repo path.
+- Resolves `npm.cmd` from `PATH`, `C:\nodejs\npm.cmd`, or standard Node install paths.
 - Starts `npm run start:desktop` in a hidden `cmd` process.
 - Writes output to `start-desktop.log`.
 - Opens Outlook after startup delay.
