@@ -75,19 +75,28 @@ npm run stop
 
 ### Windows local auto-start helper
 
-This repo includes [start-local-addin.ps1](/home/kim/repo/github/outlook-businessmails-openai/start-local-addin.ps1) for local-only usage on Windows.
+This repo includes:
+
+- [start-local-addin.ps1](/home/kim/repo/github/outlook-businessmails-openai/start-local-addin.ps1)
+- [start-local-addin.cmd](/home/kim/repo/github/outlook-businessmails-openai/start-local-addin.cmd)
 
 What it does:
 
-- Uses the script folder (`$PSScriptRoot`) as repo path.
+- Uses the script folder as repo path.
 - Starts `npm run start:desktop` in a hidden `cmd` process.
 - Writes output to `start-desktop.log`.
 - Opens Outlook after startup delay.
 
-Run it manually:
+Run PowerShell version manually:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local-addin.ps1
+```
+
+Run CMD version manually:
+
+```cmd
+start-local-addin.cmd
 ```
 
 Optional: run it automatically at logon using Task Scheduler:
