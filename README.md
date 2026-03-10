@@ -85,6 +85,7 @@ What it does:
 - Uses the script folder as repo path.
 - Resolves `npm.cmd` preferring `C:\nodejs\npm.cmd` (or recursive `C:\nodejs\...\npm.cmd`), then `PATH`, then standard Node install paths.
 - Starts `npm run start:desktop` in a hidden `cmd` process.
+- Waits for port `3000` to enter `LISTENING` state before opening Outlook (with timeout fallback).
 - Writes output to `start-desktop.log`.
 - Opens Outlook after startup delay.
 

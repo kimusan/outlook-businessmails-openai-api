@@ -53,7 +53,12 @@ if not defined PORT_IN_USE (
     call :log Launch mode: hidden/minimized console.
     start "OutlookAI-Local" /min /D "%REPO%" "%ComSpec%" /c ""%NPM%" run start:desktop >> "%LOG%" 2>&1"
   )
-  timeout /t 8 /nobreak >nul
+  call :wait_for_port 3000 60
+  if errorlevel 1 (
+    call :log WARNING: Timed out waiting for port 3000. Outlook may open before host is ready.
+  ) else (
+    call :log Port 3000 is listening. Host appears ready.
+  )
 ) else (
   call :log Port 3000 already listening; skipping new host start.
 )
@@ -70,3 +75,20 @@ exit /b 0
 :log
 >> "%LOG%" echo [%date% %time%] %*
 exit /b 0
+
+:wait_for_port
+setlocal
+set "PORT=%~1"
+set "MAX_TRIES=%~2"
+set /a COUNT=0
+
+:wait_loop
+for /f "tokens=*" %%L in ('netstat -ano ^| findstr /R /C:":%PORT% .*LISTENING"') do (
+  endlocal & exit /b 0
+)
+set /a COUNT+=1
+if %COUNT% GEQ %MAX_TRIES% (
+  endlocal & exit /b 1
+)
+timeout /t 1 /nobreak >nul
+goto :wait_loop

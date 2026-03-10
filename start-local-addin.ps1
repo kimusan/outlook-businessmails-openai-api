@@ -11,6 +11,28 @@ function Write-Log {
     Add-Content -Path $Log -Value "[$timestamp] $Message"
 }
 
+function Test-PortListening {
+    param([int]$Port)
+    return [bool](netstat -ano | Select-String ":$Port" | Select-String "LISTENING")
+}
+
+function Wait-ForPort {
+    param(
+        [int]$Port,
+        [int]$TimeoutSeconds = 60
+    )
+
+    $start = Get-Date
+    while (((Get-Date) - $start).TotalSeconds -lt $TimeoutSeconds) {
+        if (Test-PortListening -Port $Port) {
+            return $true
+        }
+        Start-Sleep -Seconds 1
+    }
+
+    return $false
+}
+
 $npmCandidates = @(
     "C:\nodejs\npm.cmd",
     (Get-ChildItem -Path "C:\nodejs" -Filter "npm.cmd" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName),
@@ -35,7 +57,7 @@ if (-not $Npm) {
 }
 
 # Skip if port 3000 is already listening.
-$inUse = netstat -ano | Select-String ":3000" | Select-String "LISTENING"
+$inUse = Test-PortListening -Port 3000
 if (-not $inUse) {
     Write-Log "Starting host with: $Npm run start:desktop"
     $cmd = "cd /d `"$Repo`" && call `"$Npm`" run start:desktop >> `"$Log`" 2>&1"
@@ -47,7 +69,11 @@ if (-not $inUse) {
         Write-Log "Launch mode: hidden console."
         Start-Process -FilePath "cmd.exe" -ArgumentList "/c $cmd" -WindowStyle Hidden
     }
-    Start-Sleep -Seconds 8
+    if (Wait-ForPort -Port 3000 -TimeoutSeconds 60) {
+        Write-Log "Port 3000 is listening. Host appears ready."
+    } else {
+        Write-Log "WARNING: Timed out waiting for port 3000. Outlook may open before host is ready."
+    }
 } else {
     Write-Log "Port 3000 already listening; skipping new host start."
 }
