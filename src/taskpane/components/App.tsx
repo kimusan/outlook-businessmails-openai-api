@@ -15,6 +15,7 @@ import Progress from "./Progress";
 import {
   getComposeTypeOrUnknown,
   getCurrentBodyText,
+  getSelectedTextOrEmpty,
   insertTextAtCursor,
   setComposeBodyText,
   splitDraftAndThread,
@@ -45,6 +46,7 @@ export interface AppProps {
 
 type HostMode = "compose" | "read";
 type Workflow = "replyDraft" | "improveDraft" | "improveReplyDraft" | "translate";
+type ContentScope = "body" | "selection";
 
 const toneOptions: IDropdownOption[] = [
   { key: "neutral", text: "Neutral" },
@@ -86,6 +88,39 @@ function loadInitialConfig(): AiServiceConfig {
   return { ...DEFAULT_AI_CONFIG, ...loadAiServiceConfig() };
 }
 
+function detectScopePreference(): ContentScope {
+  const url = new URL(window.location.href);
+  const scope = (url.searchParams.get("scope") || "").toLowerCase();
+  return scope === "selection" ? "selection" : "body";
+}
+
+function detectInitialWorkflow(hostMode: HostMode): Workflow {
+  const url = new URL(window.location.href);
+  const workflow = (url.searchParams.get("workflow") || "").toLowerCase();
+
+  if (hostMode === "read") {
+    return "translate";
+  }
+
+  if (workflow === "replydraft") {
+    return "replyDraft";
+  }
+
+  if (workflow === "improvedraft") {
+    return "improveDraft";
+  }
+
+  if (workflow === "improvereplydraft") {
+    return "improveReplyDraft";
+  }
+
+  if (workflow === "translate") {
+    return "translate";
+  }
+
+  return "replyDraft";
+}
+
 function getWorkflowLabel(workflow: Workflow): string {
   if (workflow === "replyDraft") {
     return "Draft reply";
@@ -106,8 +141,9 @@ export default function App(props: AppProps) {
   const { title, isOfficeInitialized } = props;
 
   const hostMode = React.useMemo(() => detectHostMode(), []);
+  const preferredScope = React.useMemo(() => detectScopePreference(), []);
   const initialConfig = React.useMemo(() => loadInitialConfig(), []);
-  const [workflow, setWorkflow] = React.useState<Workflow>(hostMode === "compose" ? "replyDraft" : "translate");
+  const [workflow, setWorkflow] = React.useState<Workflow>(() => detectInitialWorkflow(hostMode));
   const [config, setConfig] = React.useState<AiServiceConfig>(initialConfig);
   const [isConfigVisible, setIsConfigVisible] = React.useState<boolean>(
     () => validateAiServiceConfig(initialConfig) !== null
@@ -198,6 +234,16 @@ export default function App(props: AppProps) {
       }
 
       if (workflow === "improveDraft") {
+        if (preferredScope === "selection") {
+          const selectedText = await getSelectedTextOrEmpty();
+          if (selectedText.trim()) {
+            const output = await runAi(buildImproveDraftMessages(selectedText, tone, formality, length));
+            setResultText(output);
+            setStatus("Selected text improved.");
+            return;
+          }
+        }
+
         const bodyText = await getCurrentBodyText();
         const replyContext = splitDraftAndThread(bodyText);
         const draftText = replyContext.draftText || bodyText;
@@ -236,14 +282,24 @@ export default function App(props: AppProps) {
       }
 
       if (workflow === "translate") {
-        const bodyText = await getCurrentBodyText();
-        if (!bodyText.trim()) {
+        let sourceText = await getCurrentBodyText();
+        let usedSelection = false;
+
+        if (preferredScope === "selection") {
+          const selectedText = await getSelectedTextOrEmpty();
+          if (selectedText.trim()) {
+            sourceText = selectedText;
+            usedSelection = true;
+          }
+        }
+
+        if (!sourceText.trim()) {
           throw new Error("No email content found to translate.");
         }
 
-        const output = await runAi(buildTranslationMessages(bodyText, targetLanguage));
+        const output = await runAi(buildTranslationMessages(sourceText, targetLanguage));
         setResultText(output);
-        setStatus(`Translation to ${targetLanguage} completed.`);
+        setStatus(usedSelection ? `Selection translated to ${targetLanguage}.` : `Translation to ${targetLanguage} completed.`);
       }
     } catch (error) {
       setError((error as Error).message);
@@ -307,6 +363,11 @@ export default function App(props: AppProps) {
         <p className="taskpane-config-state">
           Configuration status: <b>{isConfigReady ? "Ready" : "Setup required"}</b>
         </p>
+        {preferredScope === "selection" && (
+          <p className="taskpane-config-state">
+            Quick action scope: <b>Selection first</b> (falls back to full draft/message if nothing is selected)
+          </p>
+        )}
 
         {isConfigVisible && (
           <div className="taskpane-section taskpane-config">

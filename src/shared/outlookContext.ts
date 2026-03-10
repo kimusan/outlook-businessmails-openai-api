@@ -49,6 +49,23 @@ export async function getCurrentBodyText(): Promise<string> {
   return value || "";
 }
 
+export async function getSelectedTextOrEmpty(): Promise<string> {
+  const item = getMailboxItem() as any;
+  if (!item || typeof item.getSelectedDataAsync !== "function") {
+    return "";
+  }
+
+  try {
+    const value = await fromAsyncResult<string>((done) => {
+      item.getSelectedDataAsync(Office.CoercionType.Text, done);
+    });
+
+    return value || "";
+  } catch {
+    return "";
+  }
+}
+
 export async function setComposeBodyText(text: string): Promise<void> {
   const item = getMailboxItem() as Office.MessageCompose;
   if (!item || !item.body || typeof item.body.setAsync !== "function") {
