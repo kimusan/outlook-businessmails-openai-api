@@ -14,7 +14,9 @@ const REPLY_MARKERS: RegExp[] = [
   /^\s*보낸 사람:\s/m,
 ];
 
-function fromAsyncResult<T>(callbackBased: (done: (result: Office.AsyncResult<T>) => void) => void): Promise<T> {
+function fromAsyncResult<T>(
+  callbackBased: (done: (result: Office.AsyncResult<T>) => void) => void
+): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     callbackBased((asyncResult) => {
       if (asyncResult.status === Office.AsyncResultStatus.Succeeded) {
@@ -89,7 +91,7 @@ export async function getComposeTypeOrUnknown(): Promise<string> {
     }
 
     return "unknown";
-  } catch (_error) {
+  } catch {
     return "unknown";
   }
 }

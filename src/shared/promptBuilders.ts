@@ -89,7 +89,10 @@ export function buildImproveReplyMessages(
   ];
 }
 
-export function buildTranslationMessages(text: string, targetLanguage: SupportedLanguage): ChatMessage[] {
+export function buildTranslationMessages(
+  text: string,
+  targetLanguage: SupportedLanguage
+): ChatMessage[] {
   const limitedText = limitWords(text, 1500);
 
   return [

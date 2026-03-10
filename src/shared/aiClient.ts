@@ -1,3 +1,5 @@
+/* global window */
+
 import { AiServiceConfig } from "./aiConfig";
 
 export interface ChatMessage {
@@ -40,8 +42,11 @@ function buildHeaders(config: AiServiceConfig): Record<string, string> {
   return headers;
 }
 
-export async function createChatCompletion(config: AiServiceConfig, messages: ChatMessage[]): Promise<string> {
-  const response = await fetch(config.endpoint, {
+export async function createChatCompletion(
+  config: AiServiceConfig,
+  messages: ChatMessage[]
+): Promise<string> {
+  const response = await window.fetch(config.endpoint, {
     method: "POST",
     headers: buildHeaders(config),
     body: JSON.stringify({

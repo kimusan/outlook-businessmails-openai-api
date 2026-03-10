@@ -1,4 +1,4 @@
-/* global Office */
+/* global Office, window */
 
 export type AuthMode = "bearer" | "customHeader" | "none";
 
@@ -40,7 +40,8 @@ function normalizeConfig(input: Partial<AiServiceConfig> | null | undefined): Ai
   return {
     endpoint: (input.endpoint || DEFAULT_AI_CONFIG.endpoint).trim(),
     model: (input.model || DEFAULT_AI_CONFIG.model).trim(),
-    temperature: typeof input.temperature === "number" ? input.temperature : DEFAULT_AI_CONFIG.temperature,
+    temperature:
+      typeof input.temperature === "number" ? input.temperature : DEFAULT_AI_CONFIG.temperature,
     authMode: (input.authMode || DEFAULT_AI_CONFIG.authMode) as AuthMode,
     apiKey: input.apiKey || DEFAULT_AI_CONFIG.apiKey,
     apiKeyHeader: (input.apiKeyHeader || DEFAULT_AI_CONFIG.apiKeyHeader).trim(),
@@ -64,7 +65,7 @@ export function loadAiServiceConfig(): AiServiceConfig {
     }
 
     return normalizeConfig(JSON.parse(localValue) as Partial<AiServiceConfig>);
-  } catch (_error) {
+  } catch {
     return { ...DEFAULT_AI_CONFIG };
   }
 }
@@ -74,7 +75,7 @@ export async function saveAiServiceConfig(config: AiServiceConfig): Promise<void
 
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
-  } catch (_error) {
+  } catch {
     // Ignore local storage issues and still attempt roaming settings.
   }
 
