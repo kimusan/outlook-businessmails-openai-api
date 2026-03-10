@@ -7,6 +7,11 @@ set "LOG=%REPO%\start-desktop.log"
 
 set "NPM="
 if exist "C:\nodejs\npm.cmd" set "NPM=C:\nodejs\npm.cmd"
+if not defined NPM if exist "C:\nodejs" (
+  for /f "delims=" %%I in ('dir /b /s /a-d "C:\nodejs\npm.cmd" 2^>nul') do (
+    if not defined NPM set "NPM=%%I"
+  )
+)
 if not defined NPM for %%I in (npm.cmd) do set "NPM=%%~$PATH:I"
 if not defined NPM if exist "%ProgramFiles%\nodejs\npm.cmd" set "NPM=%ProgramFiles%\nodejs\npm.cmd"
 if not defined NPM if exist "%ProgramFiles(x86)%\nodejs\npm.cmd" set "NPM=%ProgramFiles(x86)%\nodejs\npm.cmd"
@@ -25,19 +30,19 @@ if not defined NPM (
   echo ERROR: npm.cmd not found. Install Node.js or add it to PATH.
   exit /b 1
 )
+if not exist "%NPM%" (
+  call :log ERROR: Resolved npm path does not exist: "%NPM%"
+  echo ERROR: Resolved npm path does not exist: "%NPM%"
+  exit /b 1
+)
+call :log Using npm: "%NPM%"
 
 set "PORT_IN_USE="
 for /f "tokens=*" %%L in ('netstat -ano ^| findstr /R /C:":3000 .*LISTENING"') do set "PORT_IN_USE=1"
 
 if not defined PORT_IN_USE (
   call :log Starting host with: "%NPM%" run start:desktop
-  set "RUNNER=%TEMP%\outlook-ai-start-%RANDOM%%RANDOM%.cmd"
-  > "%RUNNER%" (
-    echo @echo off
-    echo cd /d "%REPO%"
-    echo call "%NPM%" run start:desktop ^>^> "%LOG%" 2^>^&1
-  )
-  start "OutlookAI-Local" /min cmd /c call "%RUNNER%"
+  start "OutlookAI-Local" /min "%ComSpec%" /c "cd /d \"%REPO%\" && call \"%NPM%\" run start:desktop >> \"%LOG%\" 2>&1"
   timeout /t 8 /nobreak >nul
 ) else (
   call :log Port 3000 already listening; skipping new host start.

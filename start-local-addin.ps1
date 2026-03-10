@@ -9,6 +9,7 @@ function Write-Log {
 
 $npmCandidates = @(
     "C:\nodejs\npm.cmd",
+    (Get-ChildItem -Path "C:\nodejs" -Filter "npm.cmd" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName),
     (Get-Command npm.cmd -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue),
     (Join-Path $env:ProgramFiles "nodejs\npm.cmd"),
     (Join-Path ${env:ProgramFiles(x86)} "nodejs\npm.cmd")
