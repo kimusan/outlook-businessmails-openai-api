@@ -8,8 +8,8 @@ function Write-Log {
 }
 
 $npmCandidates = @(
-    (Get-Command npm.cmd -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue),
     "C:\nodejs\npm.cmd",
+    (Get-Command npm.cmd -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue),
     (Join-Path $env:ProgramFiles "nodejs\npm.cmd"),
     (Join-Path ${env:ProgramFiles(x86)} "nodejs\npm.cmd")
 ) | Where-Object { $_ -and (Test-Path $_) }
