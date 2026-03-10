@@ -108,4 +108,4 @@ Commit target:
 - Final verification (2026-03-10):
   - `npm run lint`: passed.
   - `npm run build`: passed.
-  - `npm run validate`: failed due DNS/network (`EAI_AGAIN` reaching `validationgateway.omex.office.net`), not due manifest schema/content.
+  - `npm run validate`: passed (confirmed in your environment with full manifest validation output).
