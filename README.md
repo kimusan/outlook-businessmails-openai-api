@@ -1,104 +1,103 @@
-# Outlook OpenAI-Compatible Assistant Add-in
+# Outlook Business Mails AI Add-in
 
-This Outlook add-in provides AI workflows for desktop Outlook using an **OpenAI-compatible API**. It is designed for internal/private AI gateways and does not require direct OpenAI-hosted endpoints.
+This repository contains a Microsoft Outlook add-in focused on business email workflows powered by an **OpenAI-compatible API** endpoint.
 
-## Implemented capabilities
+The add-in is intended for internal/private AI services and supports configurable endpoint/auth settings instead of hard-coding OpenAI-hosted service usage.
 
-- Configurable AI service connection:
-  - Chat completions endpoint URL
-  - Model name
-  - Auth mode (`Bearer`, custom header, or none)
-  - API key and optional prefix
-  - Temperature
-- Reply drafting from email thread context + user direction
-- Draft optimization for composed emails with style controls:
-  - tone
-  - formality
-  - length
-- Reply-draft optimization using both:
-  - current reply text
-  - referenced thread language/style
-- Translation workflows between:
-  - English
-  - Korean
-  - Danish
-- Translation supports both read-mode emails and compose-mode drafts
+## What this add-in does
 
-## How configuration works
+- Drafts reply text from the current thread plus user-provided direction.
+- Improves existing draft text with configurable writing style.
+- Improves existing reply draft text with style inferred from referenced thread content.
+- Translates email content between English, Korean, and Danish.
+- Supports both read-mode and compose-mode taskpane scenarios.
 
-The taskpane includes an **AI Service Configuration** section.
+## AI service configuration
 
-1. Open Outlook add-in taskpane.
-2. Set `Chat completions endpoint`, for example:
-   - `https://your-internal-service.example.com/v1/chat/completions`
-3. Set model and auth settings.
-4. Save configuration.
+The taskpane provides a configuration panel with:
+
+- Chat completions endpoint URL (OpenAI-compatible)
+- Model name
+- Authentication mode (`Bearer`, `Custom header`, `None`)
+- API key + optional prefix
+- Temperature
 
 Settings are stored in Office roaming settings when available, with localStorage fallback.
 
-## Development
+## Current toolchain and key dependencies
 
-### Prerequisites
+Recommended local environment:
 
-- Node.js 20 LTS (recommended)
-- npm 10 (recommended)
+- Node.js `20.x` (LTS)
+- npm `10.x`
 
-### Setup
+Project tooling (from `package.json`):
+
+- `office-addin-cli` `^2.0.6`
+- `office-addin-debugging` `^6.0.6`
+- `office-addin-dev-certs` `^2.0.6`
+- `office-addin-lint` `^3.0.6`
+- `office-addin-manifest` `^2.1.2`
+- `office-addin-prettier-config` `^2.0.1`
+
+UI/runtime libraries:
+
+- `react` `^17.0.2`
+- `@fluentui/react` `^8.52.3`
+
+## Local development
+
+Install dependencies:
 
 ```bash
 npm install
 ```
 
-### Local checks
+Run checks:
 
 ```bash
-npm run build
 npm run lint
+npm run build
 npm run validate
 ```
 
-### Sideload
+Sideload into Outlook Desktop:
 
 ```bash
 npm run start:desktop
 ```
 
-## Installable add-in deployment
-
-This project can be distributed as an installable Outlook add-in for users in your Microsoft 365 tenant.
-
-### 1) Host the add-in web app
-
-- Build and host the web assets on HTTPS (Azure App Service, static hosting, etc.).
-- Ensure the hosted domain is reachable by Outlook Desktop/Web.
-
-### 2) Update the manifest for production
-
-- Replace all `https://localhost:3000/...` URLs in [manifest.xml](/home/kim/repo/github/outlook-businessmails-openai/manifest.xml) with your production HTTPS URLs.
-- Update `SupportUrl`, icon URLs, and taskpane/command URLs to production paths.
-- Validate the manifest:
+Stop sideloading/debug session:
 
 ```bash
-npm run validate
+npm run stop
 ```
 
-### 3) Deploy to users
+## Deploy as an installable add-in (tenant/internal)
 
-- Go to Microsoft 365 admin center.
-- Use **Integrated apps** (centralized deployment) and upload the manifest.
-- Assign users/groups and complete deployment.
+Outlook web add-ins are installed via hosted web assets + manifest deployment (not via native installer binaries).
 
-### 4) Runtime requirements
+1. Host the add-in web app on HTTPS.
+2. Update `manifest.xml` production URLs (taskpane/commands/icons/support URL).
+3. Validate manifest: `npm run validate`.
+4. Deploy manifest through Microsoft 365 admin center (`Integrated apps`) to users/groups.
 
-- Your internal OpenAI-compatible endpoint must allow requests from add-in origins.
-- Authentication and CORS must be configured for Outlook WebView/browser clients.
+## Runtime verification checklist
 
-## Validation note
+- Compose new email:
+  - Improve draft
+  - Translate draft
+- Reply to email:
+  - Draft reply from thread + direction
+  - Improve reply draft (thread-aware)
+- Read existing email:
+  - Translate received content
+- Compose apply actions:
+  - Replace draft with result
+  - Insert result at cursor
 
-This project can be built and linted cross-platform, but full runtime behavior should still be verified in **Outlook Desktop on Windows**.
+## Inspiration
 
-Suggested runtime checklist:
-- Compose new email: run Improve Draft and Translate.
-- Reply to email: run Draft Reply and Improve Reply Draft.
-- Read email: run Translate in read mode.
-- Confirm apply actions (`Replace draft`, `Insert at cursor`) work as expected.
+This project is inspired by the original Outlook/OpenAI sample repository:
+
+- https://github.com/qmatteoq/outlook-businessmails-openai
