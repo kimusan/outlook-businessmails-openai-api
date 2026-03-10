@@ -73,6 +73,32 @@ Stop sideloading/debug session:
 npm run stop
 ```
 
+### Windows local auto-start helper
+
+This repo includes [start-local-addin.ps1](/home/kim/repo/github/outlook-businessmails-openai/start-local-addin.ps1) for local-only usage on Windows.
+
+What it does:
+
+- Uses the script folder (`$PSScriptRoot`) as repo path.
+- Starts `npm run start:desktop` in a hidden `cmd` process.
+- Writes output to `start-desktop.log`.
+- Opens Outlook after startup delay.
+
+Run it manually:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local-addin.ps1
+```
+
+Optional: run it automatically at logon using Task Scheduler:
+
+```powershell
+$repo = "C:\path\to\outlook-businessmails-openai"
+$action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$repo\start-local-addin.ps1`""
+$trigger = New-ScheduledTaskTrigger -AtLogOn
+Register-ScheduledTask -TaskName "Outlook AI Local Addin" -Action $action -Trigger $trigger -Description "Start local Outlook AI add-in host and open Outlook"
+```
+
 ## Deploy as an installable add-in (tenant/internal)
 
 Outlook web add-ins are installed via hosted web assets + manifest deployment (not via native installer binaries).
