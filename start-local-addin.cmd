@@ -1,6 +1,10 @@
 @echo off
 setlocal EnableExtensions
 
+set "SHOW_CONSOLE=0"
+if /I "%~1"=="--visible" set "SHOW_CONSOLE=1"
+if /I "%~1"=="visible" set "SHOW_CONSOLE=1"
+
 set "REPO=%~dp0"
 if "%REPO:~-1%"=="\" set "REPO=%REPO:~0,-1%"
 set "LOG=%REPO%\start-desktop.log"
@@ -42,7 +46,13 @@ for /f "tokens=*" %%L in ('netstat -ano ^| findstr /R /C:":3000 .*LISTENING"') d
 
 if not defined PORT_IN_USE (
   call :log Starting host with: "%NPM%" run start:desktop
-  start "OutlookAI-Local" /min "%ComSpec%" /c "cd /d \"%REPO%\" && call \"%NPM%\" run start:desktop >> \"%LOG%\" 2>&1"
+  if "%SHOW_CONSOLE%"=="1" (
+    call :log Launch mode: visible console.
+    start "OutlookAI-Local" "%ComSpec%" /k "cd /d \"%REPO%\" && call \"%NPM%\" run start:desktop"
+  ) else (
+    call :log Launch mode: hidden/minimized console.
+    start "OutlookAI-Local" /min "%ComSpec%" /c "cd /d \"%REPO%\" && call \"%NPM%\" run start:desktop >> \"%LOG%\" 2>&1"
+  )
   timeout /t 8 /nobreak >nul
 ) else (
   call :log Port 3000 already listening; skipping new host start.

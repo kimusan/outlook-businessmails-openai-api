@@ -1,3 +1,7 @@
+param(
+    [switch]$Visible
+)
+
 $Repo = $PSScriptRoot
 $Log = Join-Path $Repo "start-desktop.log"
 
@@ -35,7 +39,14 @@ $inUse = netstat -ano | Select-String ":3000" | Select-String "LISTENING"
 if (-not $inUse) {
     Write-Log "Starting host with: $Npm run start:desktop"
     $cmd = "cd /d `"$Repo`" && call `"$Npm`" run start:desktop >> `"$Log`" 2>&1"
-    Start-Process -FilePath "cmd.exe" -ArgumentList "/c $cmd" -WindowStyle Hidden
+    if ($Visible) {
+        Write-Log "Launch mode: visible console."
+        $visibleCmd = "cd /d `"$Repo`" && call `"$Npm`" run start:desktop"
+        Start-Process -FilePath "cmd.exe" -ArgumentList "/k $visibleCmd" -WindowStyle Normal
+    } else {
+        Write-Log "Launch mode: hidden console."
+        Start-Process -FilePath "cmd.exe" -ArgumentList "/c $cmd" -WindowStyle Hidden
+    }
     Start-Sleep -Seconds 8
 } else {
     Write-Log "Port 3000 already listening; skipping new host start."

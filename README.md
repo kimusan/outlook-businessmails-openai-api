@@ -94,10 +94,22 @@ Run PowerShell version manually:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local-addin.ps1
 ```
 
+Run PowerShell helper with visible host console (debug startup issues):
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local-addin.ps1 -Visible
+```
+
 Run CMD version manually:
 
 ```cmd
 start-local-addin.cmd
+```
+
+Run CMD helper with visible host console:
+
+```cmd
+start-local-addin.cmd --visible
 ```
 
 Optional: run it automatically at logon using Task Scheduler:
