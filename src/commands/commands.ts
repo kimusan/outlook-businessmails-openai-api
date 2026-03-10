@@ -5,52 +5,27 @@
 
 /* global global, Office, self, window */
 
-import { Configuration, OpenAIApi } from "openai";
-
 Office.onReady(() => {
-  // If needed, Office.js is ready to be called
+  // Office.js is ready.
 });
 
 /**
- * Generate a business mail when the add-in command is executed.
- * @param event
+ * Compose quick action callback.
+ * This no longer calls an AI endpoint directly, and guides the user to the task pane workflows.
  */
 function action(event: Office.AddinCommands.Event) {
-  getSelectedText().then(function (selectedText) {
-    Office.context.mailbox.item.setSelectedDataAsync(selectedText, { coercionType: Office.CoercionType.Text });
-    event.completed();
-  });
-}
+  const item = Office.context.mailbox.item as Office.MessageCompose;
 
-function getSelectedText(): Promise<any> {
-  return new Office.Promise(function (resolve, reject) {
-    try {
-      Office.context.mailbox.item.body.getAsync(Office.CoercionType.Text, async function (asyncResult) {
-        const configuration = new Configuration({
-          apiKey: "your-api-key",
-        });
-        const openai = new OpenAIApi(configuration);
-        const response = await openai.createChatCompletion({
-          model: "gpt-3.5-turbo",
-          messages: [
-            {
-              role: "system",
-              content:
-                "You are a helpful assistant that can help users to better manage emails. The following prompt contains the whole mail thread. ",
-            },
-            {
-              role: "user",
-              content: "Summarize the following mail thread and extract the key points: " + asyncResult.value,
-            },
-          ],
-        });
+  if (item && item.notificationMessages) {
+    item.notificationMessages.replaceAsync("OutlookAiAssistantInfo", {
+      type: Office.MailboxEnums.ItemNotificationMessageType.InformationalMessage,
+      message: "Open AI Assistant pane to draft, improve, or translate this email.",
+      icon: "Icon.80x80",
+      persistent: false,
+    });
+  }
 
-        resolve(response.data.choices[0].message.content);
-      });
-    } catch (error) {
-      reject(error);
-    }
-  });
+  event.completed();
 }
 
 function getGlobal() {
@@ -65,5 +40,4 @@ function getGlobal() {
 
 const g = getGlobal() as any;
 
-// The add-in command functions need to be available in global scope
 g.action = action;

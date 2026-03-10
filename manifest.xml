@@ -120,11 +120,11 @@
         <bt:String id="GroupLabelCompose" DefaultValue="Outlook AI Assistant"/>
         <bt:String id="GroupLabelRead" DefaultValue="Outlook AI Assistant"/>
         <bt:String id="TaskpaneButton.Label" DefaultValue="AI Assistant"/>
-        <bt:String id="ActionButton.Label" DefaultValue="Generate business mail"/>
+        <bt:String id="ActionButton.Label" DefaultValue="AI quick info"/>
       </bt:ShortStrings>
       <bt:LongStrings>
-        <bt:String id="TaskpaneButton.Tooltip" DefaultValue="Opens a pane that can help you to turn a sentence into a professional business mail."/>
-        <bt:String id="ActionButton.Tooltip" DefaultValue="Generate a business mail starting from the selected text."/>
+        <bt:String id="TaskpaneButton.Tooltip" DefaultValue="Open AI workflows to draft replies, improve drafts, and translate emails."/>
+        <bt:String id="ActionButton.Tooltip" DefaultValue="Show quick info about using the AI Assistant pane."/>
       </bt:LongStrings>
     </Resources>
   </VersionOverrides>
