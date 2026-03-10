@@ -1,43 +1,74 @@
-# Outlook OpenAI Add-in
+# Outlook OpenAI-Compatible Assistant Add-in
 
-This add-in allows you to write professional business emails with the help of OpenAI APIs. You can simply type a simple sentence and the add-in will generate a polished and formal email based on your input.
+This Outlook add-in provides AI workflows for desktop Outlook using an **OpenAI-compatible API**. It is designed for internal/private AI gateways and does not require direct OpenAI-hosted endpoints.
 
-The project comes into two variants:
+## Implemented capabilities
 
-- the master branch is based on the Open AI APIs, so you will need to get an API Key from the [OpenAI portal](https://platform.openai.com/overview).
-- the azure-open-ai branch is based on the [Azure Open AI APIs](https://azure.microsoft.com/en-us/products/cognitive-services/openai-service), so you will need to create a service instance on your Azure subscription. Please be aware that you must be approved by Microsoft before being able to use Azure Open AI.
+- Configurable AI service connection:
+  - Chat completions endpoint URL
+  - Model name
+  - Auth mode (`Bearer`, custom header, or none)
+  - API key and optional prefix
+  - Temperature
+- Reply drafting from email thread context + user direction
+- Draft optimization for composed emails with style controls:
+  - tone
+  - formality
+  - length
+- Reply-draft optimization using both:
+  - current reply text
+  - referenced thread language/style
+- Translation workflows between:
+  - English
+  - Korean
+  - Danish
+- Translation supports both read-mode emails and compose-mode drafts
 
-**Please note:** this project is meant to help developers understanding how they can integrate OpenAI APIs and ChatGPT into their applications, in this case an Outlook add-in. It's not meant to be a "ready to be deployed" solution.
+## How configuration works
 
-This project is a companion of the following articles, which explains how this add-in was built:
+The taskpane includes an **AI Service Configuration** section.
 
-- [Bringing OpenAI into an Outlook add-in: a business mail generator](https://techcommunity.microsoft.com/t5/modern-work-app-consult-blog/bringing-openai-into-an-outlook-add-in-a-business-mail-generator/ba-p/3743099)
-- [Bringing Open AI into an Outlook add-in: moving to Azure Open AI](https://techcommunity.microsoft.com/t5/modern-work-app-consult-blog/bringing-openai-into-an-outlook-add-in-a-business-mail-generator/ba-p/3743099)
-- [Bring the ChatGPT model into our applications](https://techcommunity.microsoft.com/t5/modern-work-app-consult-blog/bring-the-chatgpt-model-into-our-applications/ba-p/3766574)
+1. Open Outlook add-in taskpane.
+2. Set `Chat completions endpoint`, for example:
+   - `https://your-internal-service.example.com/v1/chat/completions`
+3. Set model and auth settings.
+4. Save configuration.
 
-## How to use
+Settings are stored in Office roaming settings when available, with localStorage fallback.
 
-**Please note**: make sure to read [the companion blog post](https://techcommunity.microsoft.com/t5/modern-work-app-consult-blog/bringing-openai-into-an-outlook-add-in-a-business-mail-generator/ba-p/3743099) to understand all the requirements.
+## Development
 
-- Clone the repository on your machine
-- Open the solution with Visual Studio Code.
-- Make sure to replace the existing placeholders with your information:
-  - In case you're using the master branch, add your API key
-  - In case you're using Azure Open AI service, add your URL, deployment name and API key.
-- Move to the Debug tab in Visual Studio Code, choose **Outlook Desktop (Edge Chromium)** and press F5. The add-in will be sideloaded in Outlook desktop.
-- Compose a new mail, click on AI Assistant, type one or two sentences and click on the Generate button and wait for the add-in to produce a professional email. You can edit the email as you wish before sending it.
-- Enjoy the convenience and efficiency of writing business emails with OpenAI!
+### Prerequisites
 
-## Features
+- Node.js 18 LTS (recommended)
+- npm 10 (recommended)
 
-- The add-in uses OpenAI's GPT-3 language model to generate high-quality and natural-sounding emails.
-- The add-in adapts to different contexts and tones based on your input and the recipient's information.
-- The add-in respects your privacy and does not store or share your email content.
+### Setup
 
-## Deployment
+```bash
+npm install
+```
 
-This add-in is built using the Office web model. If you want to deploy it on other machines without using Visual Studio Code, you must host it on a web storage and change the manifest file to point to the new URL. Refer to [the following documentation](https://learn.microsoft.com/en-us/office/dev/add-ins/publish/publish-add-in-vs-code) to learn how to host the add-in on Azure Storage.
+### Local checks
 
-## Feedback
+```bash
+npm run build
+npm run lint
+npm run validate
+```
 
-If you have any feedback, suggestions or issues with the add-in, please feel free to open an issue or a pull request on this repository.
+### Sideload
+
+```bash
+npm run start:desktop
+```
+
+## Validation note
+
+This project can be built and linted cross-platform, but full runtime behavior should still be verified in **Outlook Desktop on Windows**.
+
+Suggested runtime checklist:
+- Compose new email: run Improve Draft and Translate.
+- Reply to email: run Draft Reply and Improve Reply Draft.
+- Read email: run Translate in read mode.
+- Confirm apply actions (`Replace draft`, `Insert at cursor`) work as expected.
