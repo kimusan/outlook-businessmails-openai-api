@@ -23,7 +23,18 @@ body {
   padding: 14px;
 }
 
-.ms-welcome__main > h2 {
+.taskpane-heading-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.taskpane-heading-row > h2 {
+  margin: 0;
+}
+
+.taskpane-config-state {
   margin: 0;
 }
 

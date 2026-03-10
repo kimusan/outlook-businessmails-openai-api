@@ -82,6 +82,10 @@ function detectHostMode(): HostMode {
   return "read";
 }
 
+function loadInitialConfig(): AiServiceConfig {
+  return { ...DEFAULT_AI_CONFIG, ...loadAiServiceConfig() };
+}
+
 function getWorkflowLabel(workflow: Workflow): string {
   if (workflow === "replyDraft") {
     return "Draft reply";
@@ -102,8 +106,12 @@ export default function App(props: AppProps) {
   const { title, isOfficeInitialized } = props;
 
   const hostMode = React.useMemo(() => detectHostMode(), []);
+  const initialConfig = React.useMemo(() => loadInitialConfig(), []);
   const [workflow, setWorkflow] = React.useState<Workflow>(hostMode === "compose" ? "replyDraft" : "translate");
-  const [config, setConfig] = React.useState<AiServiceConfig>(() => ({ ...DEFAULT_AI_CONFIG, ...loadAiServiceConfig() }));
+  const [config, setConfig] = React.useState<AiServiceConfig>(initialConfig);
+  const [isConfigVisible, setIsConfigVisible] = React.useState<boolean>(
+    () => validateAiServiceConfig(initialConfig) !== null
+  );
   const [tone, setTone] = React.useState<ToneOption>("neutral");
   const [formality, setFormality] = React.useState<FormalityOption>("balanced");
   const [length, setLength] = React.useState<LengthOption>("medium");
@@ -114,6 +122,7 @@ export default function App(props: AppProps) {
   const [errorText, setErrorText] = React.useState<string>("");
   const [isLoading, setIsLoading] = React.useState<boolean>(false);
   const [isSavingConfig, setIsSavingConfig] = React.useState<boolean>(false);
+  const isConfigReady = validateAiServiceConfig(config) === null;
 
   if (!isOfficeInitialized) {
     return (
@@ -138,6 +147,7 @@ export default function App(props: AppProps) {
   const runAi = async (messages: { role: "system" | "user" | "assistant"; content: string }[]) => {
     const validationError = validateAiServiceConfig(config);
     if (validationError) {
+      setIsConfigVisible(true);
       throw new Error(validationError);
     }
 
@@ -154,6 +164,7 @@ export default function App(props: AppProps) {
 
       await saveAiServiceConfig(config);
       setStatus("Configuration saved.");
+      setIsConfigVisible(false);
     } catch (error) {
       setError((error as Error).message);
     } finally {
@@ -286,80 +297,99 @@ export default function App(props: AppProps) {
   return (
     <div className="ms-welcome">
       <main className="ms-welcome__main">
-        <h2 className="ms-font-xl ms-fontWeight-semilight ms-fontColor-neutralPrimary">Outlook AI Assistant</h2>
-        <p className="ms-font-m">Mode: {hostMode === "compose" ? "Compose" : "Read"}</p>
-
-        <div className="taskpane-section taskpane-config">
-          <h3>AI Service Configuration</h3>
-          <TextField
-            label="Chat completions endpoint"
-            value={config.endpoint}
-            placeholder="https://internal-ai.example.com/v1/chat/completions"
-            onChange={(_ev, value) => setConfig({ ...config, endpoint: value || "" })}
-          />
-          <TextField
-            label="Model"
-            value={config.model}
-            onChange={(_ev, value) => setConfig({ ...config, model: value || "" })}
-          />
-          <Dropdown
-            label="Authentication mode"
-            selectedKey={config.authMode}
-            options={[
-              { key: "bearer", text: "Bearer token (Authorization header)" },
-              { key: "customHeader", text: "Custom header" },
-              { key: "none", text: "None" },
-            ]}
-            onChange={(_ev, option) => {
-              if (!option) {
-                return;
-              }
-
-              setConfig({ ...config, authMode: option.key as "bearer" | "customHeader" | "none" });
-            }}
-          />
-          {config.authMode !== "none" && (
-            <TextField
-              type="password"
-              canRevealPassword
-              revealPasswordAriaLabel="Show password"
-              label="API key"
-              value={config.apiKey}
-              onChange={(_ev, value) => setConfig({ ...config, apiKey: value || "" })}
-            />
-          )}
-          {config.authMode === "customHeader" && (
-            <TextField
-              label="API key header name"
-              value={config.apiKeyHeader}
-              onChange={(_ev, value) => setConfig({ ...config, apiKeyHeader: value || "" })}
-            />
-          )}
-          {(config.authMode === "bearer" || config.authMode === "customHeader") && (
-            <TextField
-              label="Optional API key prefix"
-              value={config.apiKeyPrefix}
-              placeholder="Example: Token"
-              onChange={(_ev, value) => setConfig({ ...config, apiKeyPrefix: value || "" })}
-            />
-          )}
-          <SpinButton
-            label="Temperature"
-            min={0}
-            max={2}
-            step={0.1}
-            value={String(config.temperature)}
-            onValidate={(value) => {
-              const parsed = parseFloat(value || "0");
-              const normalized = Number.isNaN(parsed) ? 0.4 : Math.max(0, Math.min(2, parsed));
-              setConfig({ ...config, temperature: normalized });
-              return normalized.toFixed(1);
-            }}
-          />
-          <PrimaryButton onClick={onSaveConfig} disabled={isSavingConfig}>
-            Save configuration
-          </PrimaryButton>
+        <div className="taskpane-heading-row">
+          <h2 className="ms-font-xl ms-fontWeight-semilight ms-fontColor-neutralPrimary">Outlook AI Assistant</h2>
+          <DefaultButton onClick={() => setIsConfigVisible(!isConfigVisible)}>
+            {isConfigVisible ? "Hide configuration" : "Configuration"}
+          </DefaultButton>
         </div>
+        <p className="ms-font-m">Mode: {hostMode === "compose" ? "Compose" : "Read"}</p>
+        <p className="taskpane-config-state">
+          Configuration status: <b>{isConfigReady ? "Ready" : "Setup required"}</b>
+        </p>
+
+        {isConfigVisible && (
+          <div className="taskpane-section taskpane-config">
+            <h3>AI Service Configuration</h3>
+            <TextField
+              label="Chat completions endpoint"
+              value={config.endpoint}
+              placeholder="https://internal-ai.example.com/v1/chat/completions"
+              onChange={(_ev, value) => setConfig({ ...config, endpoint: value || "" })}
+            />
+            <TextField
+              label="Model"
+              value={config.model}
+              onChange={(_ev, value) => setConfig({ ...config, model: value || "" })}
+            />
+            <Dropdown
+              label="Authentication mode"
+              selectedKey={config.authMode}
+              options={[
+                { key: "bearer", text: "Bearer token (Authorization header)" },
+                { key: "customHeader", text: "Custom header" },
+                { key: "none", text: "None" },
+              ]}
+              onChange={(_ev, option) => {
+                if (!option) {
+                  return;
+                }
+
+                setConfig({ ...config, authMode: option.key as "bearer" | "customHeader" | "none" });
+              }}
+            />
+            {config.authMode !== "none" && (
+              <TextField
+                type="password"
+                canRevealPassword
+                revealPasswordAriaLabel="Show password"
+                label="API key"
+                value={config.apiKey}
+                onChange={(_ev, value) => setConfig({ ...config, apiKey: value || "" })}
+              />
+            )}
+            {config.authMode === "customHeader" && (
+              <TextField
+                label="API key header name"
+                value={config.apiKeyHeader}
+                onChange={(_ev, value) => setConfig({ ...config, apiKeyHeader: value || "" })}
+              />
+            )}
+            {(config.authMode === "bearer" || config.authMode === "customHeader") && (
+              <TextField
+                label="Optional API key prefix"
+                value={config.apiKeyPrefix}
+                placeholder="Example: Token"
+                onChange={(_ev, value) => setConfig({ ...config, apiKeyPrefix: value || "" })}
+              />
+            )}
+            <SpinButton
+              label="Temperature"
+              min={0}
+              max={2}
+              step={0.1}
+              value={String(config.temperature)}
+              onValidate={(value) => {
+                const parsed = parseFloat(value || "0");
+                const normalized = Number.isNaN(parsed) ? 0.4 : Math.max(0, Math.min(2, parsed));
+                setConfig({ ...config, temperature: normalized });
+                return normalized.toFixed(1);
+              }}
+            />
+            <div className="taskpane-actions">
+              <PrimaryButton onClick={onSaveConfig} disabled={isSavingConfig}>
+                Save configuration
+              </PrimaryButton>
+              <DefaultButton onClick={() => setIsConfigVisible(false)}>Close</DefaultButton>
+            </div>
+          </div>
+        )}
+
+        {!isConfigVisible && !isConfigReady && (
+          <MessageBar messageBarType={MessageBarType.warning} isMultiline={false}>
+            AI configuration is incomplete. Open Configuration to continue.
+          </MessageBar>
+        )}
 
         <div className="taskpane-section">
           <h3>Workflow</h3>
