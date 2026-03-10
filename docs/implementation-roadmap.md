@@ -90,7 +90,7 @@ Commit target:
 - `docs(readme): document internal endpoint setup and new features`
 
 ## Step 6: Final verification and handoff
-Status: `[-]`
+Status: `[x]`
 
 Deliverables:
 - Run final local checks and summarize pass/fail:
@@ -105,4 +105,7 @@ Commit target:
 ## Notes
 - Since development is performed off Windows, runtime behavior inside Outlook Desktop cannot be fully executed here.
 - Validation emphasis will be on static/build/lint/manifest checks and API-safe Office.js usage patterns.
-- Current blocker in this environment: dependency install fails with Node 25/npm 11 runtime issues and no network access for fallback npm versions.
+- Final verification (2026-03-10):
+  - `npm run lint`: passed.
+  - `npm run build`: passed.
+  - `npm run validate`: failed due DNS/network (`EAI_AGAIN` reaching `validationgateway.omex.office.net`), not due manifest schema/content.
