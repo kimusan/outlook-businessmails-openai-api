@@ -48,10 +48,10 @@ if not defined PORT_IN_USE (
   call :log Starting host with: "%NPM%" run start:desktop
   if "%SHOW_CONSOLE%"=="1" (
     call :log Launch mode: visible console.
-    start "OutlookAI-Local" "%ComSpec%" /k "cd /d \"%REPO%\" && call \"%NPM%\" run start:desktop"
+    start "OutlookAI-Local" /D "%REPO%" "%ComSpec%" /k ""%NPM%" run start:desktop"
   ) else (
     call :log Launch mode: hidden/minimized console.
-    start "OutlookAI-Local" /min "%ComSpec%" /c "cd /d \"%REPO%\" && call \"%NPM%\" run start:desktop >> \"%LOG%\" 2>&1"
+    start "OutlookAI-Local" /min /D "%REPO%" "%ComSpec%" /c ""%NPM%" run start:desktop >> "%LOG%" 2>&1"
   )
   timeout /t 8 /nobreak >nul
 ) else (
