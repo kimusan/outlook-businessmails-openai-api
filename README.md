@@ -40,7 +40,7 @@ Settings are stored in Office roaming settings when available, with localStorage
 
 ### Prerequisites
 
-- Node.js 18 LTS (recommended)
+- Node.js 20 LTS (recommended)
 - npm 10 (recommended)
 
 ### Setup
@@ -62,6 +62,36 @@ npm run validate
 ```bash
 npm run start:desktop
 ```
+
+## Installable add-in deployment
+
+This project can be distributed as an installable Outlook add-in for users in your Microsoft 365 tenant.
+
+### 1) Host the add-in web app
+
+- Build and host the web assets on HTTPS (Azure App Service, static hosting, etc.).
+- Ensure the hosted domain is reachable by Outlook Desktop/Web.
+
+### 2) Update the manifest for production
+
+- Replace all `https://localhost:3000/...` URLs in [manifest.xml](/home/kim/repo/github/outlook-businessmails-openai/manifest.xml) with your production HTTPS URLs.
+- Update `SupportUrl`, icon URLs, and taskpane/command URLs to production paths.
+- Validate the manifest:
+
+```bash
+npm run validate
+```
+
+### 3) Deploy to users
+
+- Go to Microsoft 365 admin center.
+- Use **Integrated apps** (centralized deployment) and upload the manifest.
+- Assign users/groups and complete deployment.
+
+### 4) Runtime requirements
+
+- Your internal OpenAI-compatible endpoint must allow requests from add-in origins.
+- Authentication and CORS must be configured for Outlook WebView/browser clients.
 
 ## Validation note
 
