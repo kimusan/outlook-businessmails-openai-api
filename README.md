@@ -165,6 +165,7 @@ Optional variables used by scripts/runtime:
 - `LOCAL_CERT_KEY_PATH`
 - `SEA_NODE_EXE` (override node.exe used for SEA packaging)
 - `SEA_SENTINEL_FUSE` (optional override for postject sentinel fuse; default `NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2`)
+- `POSTJECT_PACKAGE` (optional override for postject package/version used by `sea:package`; default `postject@1.0.0-alpha.6`)
 - `ADDIN_BASE_URL` (webpack manifest URL rewrite base, defaults to localhost)
 - `OUTLOOK_AI_HOST_DEBUG=1` (runtime stdout logging in addition to file logs)
 
@@ -179,7 +180,7 @@ Optional variables used by scripts/runtime:
   - Change `LOCAL_HOST_PORT` and regenerate manifest/runtime.
 - SEA packaging errors:
   - Ensure packaging is run on Windows.
-  - Ensure `npm install` has installed `postject`.
+  - Ensure `npm install` has installed dependencies (including `postject`).
   - If sentinel/fuse errors appear, set `SEA_NODE_EXE` to an official Node `node.exe` (not a launcher/shim), then rerun packaging:
 
 ```powershell

@@ -8,6 +8,7 @@ const outputDir = path.join(rootDir, "release", "local-host");
 const outputExePath = path.join(outputDir, "OutlookAiLocalHost.exe");
 const SEA_FUSE_ID = "fce680ab2cc467b6e072b8b5df1996b2";
 const DEFAULT_SENTINEL_FUSE = `NODE_SEA_FUSE_${SEA_FUSE_ID}`;
+const DEFAULT_POSTJECT_PACKAGE = "postject@1.0.0-alpha.6";
 
 function resolveNodeExecutablePath() {
   if (process.env.SEA_NODE_EXE) {
@@ -42,14 +43,6 @@ function resolveNpmRunner() {
   );
 }
 
-function resolveLocalPostjectCommand() {
-  const localBin = process.platform === "win32"
-    ? path.join(rootDir, "node_modules", ".bin", "postject.cmd")
-    : path.join(rootDir, "node_modules", ".bin", "postject");
-
-  return fs.existsSync(localBin) ? localBin : null;
-}
-
 function resolveSentinelFuse() {
   return process.env.SEA_SENTINEL_FUSE || DEFAULT_SENTINEL_FUSE;
 }
@@ -78,8 +71,6 @@ async function runPostject(executablePath, blobFilePath) {
     );
   }
 
-  const localPostject = resolveLocalPostjectCommand();
-
   const postjectArgs = [
     executablePath,
     "NODE_SEA_BLOB",
@@ -88,17 +79,18 @@ async function runPostject(executablePath, blobFilePath) {
     sentinelFuse,
   ];
 
-  let command = "";
-  let args = [];
-
-  if (localPostject) {
-    command = localPostject;
-    args = postjectArgs;
-  } else {
-    const npmRunner = resolveNpmRunner();
-    command = npmRunner.command;
-    args = [...npmRunner.argsPrefix, "--yes", "postject", ...postjectArgs];
-  }
+  const npmRunner = resolveNpmRunner();
+  const postjectPackage = process.env.POSTJECT_PACKAGE || DEFAULT_POSTJECT_PACKAGE;
+  const command = npmRunner.command;
+  const args = [
+    ...npmRunner.argsPrefix,
+    "--yes",
+    "--package",
+    postjectPackage,
+    "--",
+    "postject",
+    ...postjectArgs,
+  ];
 
   const result = spawnSync(command, args, {
     cwd: rootDir,
