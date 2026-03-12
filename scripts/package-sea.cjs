@@ -40,13 +40,18 @@ function resolveNpmRunner() {
   );
 }
 
-function runPostject(executablePath, blobFilePath) {
-  const npmRunner = resolveNpmRunner();
+function resolveLocalPostjectCommand() {
+  const localBin = process.platform === "win32"
+    ? path.join(rootDir, "node_modules", ".bin", "postject.cmd")
+    : path.join(rootDir, "node_modules", ".bin", "postject");
 
-  const args = [
-    ...npmRunner.argsPrefix,
-    "--yes",
-    "postject",
+  return fs.existsSync(localBin) ? localBin : null;
+}
+
+function runPostject(executablePath, blobFilePath) {
+  const localPostject = resolveLocalPostjectCommand();
+
+  const postjectArgs = [
     executablePath,
     "NODE_SEA_BLOB",
     blobFilePath,
@@ -54,7 +59,19 @@ function runPostject(executablePath, blobFilePath) {
     "NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2",
   ];
 
-  const result = spawnSync(npmRunner.command, args, {
+  let command = "";
+  let args = [];
+
+  if (localPostject) {
+    command = localPostject;
+    args = postjectArgs;
+  } else {
+    const npmRunner = resolveNpmRunner();
+    command = npmRunner.command;
+    args = [...npmRunner.argsPrefix, "--yes", "postject", ...postjectArgs];
+  }
+
+  const result = spawnSync(command, args, {
     cwd: rootDir,
     stdio: "inherit",
     shell: false,
