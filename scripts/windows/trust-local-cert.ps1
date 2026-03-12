@@ -8,7 +8,9 @@ if ([string]::IsNullOrWhiteSpace($InstallDir)) {
   $InstallDir = Split-Path -Parent $PSScriptRoot
 }
 
-$InstallDir = (Resolve-Path $InstallDir).Path
+$InstallDir = $InstallDir.Trim().Trim('"')
+$InstallDir = $InstallDir.TrimEnd('\', '/')
+$InstallDir = (Resolve-Path -LiteralPath $InstallDir).Path
 $CaCertPath = Join-Path $InstallDir "certs\dev-ca.crt"
 $LeafCertPath = Join-Path $InstallDir "certs\localhost.cer"
 

@@ -8,7 +8,9 @@ if ([string]::IsNullOrWhiteSpace($InstallDir)) {
   $InstallDir = Split-Path -Parent $PSScriptRoot
 }
 
-$InstallDir = (Resolve-Path $InstallDir).Path
+$InstallDir = $InstallDir.Trim().Trim('"')
+$InstallDir = $InstallDir.TrimEnd('\', '/')
+$InstallDir = (Resolve-Path -LiteralPath $InstallDir).Path
 $StartupFolder = [Environment]::GetFolderPath("Startup")
 $ShortcutPath = Join-Path $StartupFolder "Outlook AI Local Host.lnk"
 $VbsPath = Join-Path $InstallDir "start-hidden.vbs"
