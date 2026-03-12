@@ -15,10 +15,36 @@ function resolveNodeExecutablePath() {
   return process.execPath;
 }
 
+function resolveNpmRunner() {
+  const npmExecPath = process.env.npm_execpath;
+  if (npmExecPath && fs.existsSync(npmExecPath)) {
+    return {
+      command: process.execPath,
+      argsPrefix: [npmExecPath, "exec"],
+    };
+  }
+
+  const nodeDir = path.dirname(process.execPath);
+  const npmCmdPath = process.platform === "win32"
+    ? path.join(nodeDir, "npm.cmd")
+    : path.join(nodeDir, "npm");
+  if (fs.existsSync(npmCmdPath)) {
+    return {
+      command: npmCmdPath,
+      argsPrefix: ["exec"],
+    };
+  }
+
+  throw new Error(
+    "Unable to locate npm executable for postject injection. Ensure npm is available when running sea:package."
+  );
+}
+
 function runPostject(executablePath, blobFilePath) {
-  const npxCommand = process.platform === "win32" ? "npx.cmd" : "npx";
+  const npmRunner = resolveNpmRunner();
 
   const args = [
+    ...npmRunner.argsPrefix,
     "--yes",
     "postject",
     executablePath,
@@ -28,14 +54,20 @@ function runPostject(executablePath, blobFilePath) {
     "NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2",
   ];
 
-  const result = spawnSync(npxCommand, args, {
+  const result = spawnSync(npmRunner.command, args, {
     cwd: rootDir,
     stdio: "inherit",
     shell: false,
   });
 
-  if (result.status !== 0) {
-    throw new Error(`postject failed with exit code ${result.status}.`);
+  if (result.error) {
+    throw new Error(`postject execution failed to start: ${result.error.message}`);
+  }
+
+  if (result.status !== 0 || result.signal) {
+    const exitCode = result.status === null ? "null" : String(result.status);
+    const signal = result.signal ? `, signal ${result.signal}` : "";
+    throw new Error(`postject failed with exit code ${exitCode}${signal}.`);
   }
 }
 
