@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <rect x="8" y="8" width="112" height="112" rx="24" fill="#8B5CF6"/>
+  <path d="M32 50 H72" stroke="#FFFFFF" stroke-width="8" stroke-linecap="round"/>
+  <path d="M60 38 L72 50 L60 62" fill="none" stroke="#FFFFFF" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M96 78 H56" stroke="#FFFFFF" stroke-width="8" stroke-linecap="round"/>
+  <path d="M68 66 L56 78 L68 90" fill="none" stroke="#FFFFFF" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="38" y="84" font-family="Segoe UI, Arial, sans-serif" font-size="30" font-weight="700" fill="#FFFFFF">A</text>
+  <text x="82" y="52" font-family="Segoe UI, Arial, sans-serif" font-size="24" font-weight="700" fill="#FFFFFF">文</text>
+</svg>

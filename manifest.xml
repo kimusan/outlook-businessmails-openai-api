@@ -54,9 +54,9 @@
                     <Description resid="TaskpaneButton.Tooltip"/>
                   </Supertip>
                   <Icon>
-                    <bt:Image size="16" resid="Icon.16x16"/>
-                    <bt:Image size="32" resid="Icon.32x32"/>
-                    <bt:Image size="80" resid="Icon.80x80"/>
+                    <bt:Image size="16" resid="IconAi.16x16"/>
+                    <bt:Image size="32" resid="IconAi.32x32"/>
+                    <bt:Image size="80" resid="IconAi.80x80"/>
                   </Icon>
                   <Action xsi:type="ShowTaskpane">
                     <SourceLocation resid="Taskpane.ComposeUrl"/>
@@ -69,9 +69,9 @@
                     <Description resid="ComposeImproveButton.Tooltip"/>
                   </Supertip>
                   <Icon>
-                    <bt:Image size="16" resid="Icon.16x16"/>
-                    <bt:Image size="32" resid="Icon.32x32"/>
-                    <bt:Image size="80" resid="Icon.80x80"/>
+                    <bt:Image size="16" resid="IconImprove.16x16"/>
+                    <bt:Image size="32" resid="IconImprove.32x32"/>
+                    <bt:Image size="80" resid="IconImprove.80x80"/>
                   </Icon>
                   <Action xsi:type="ShowTaskpane">
                     <SourceLocation resid="Taskpane.ComposeImproveUrl"/>
@@ -84,9 +84,9 @@
                     <Description resid="ComposeTranslateButton.Tooltip"/>
                   </Supertip>
                   <Icon>
-                    <bt:Image size="16" resid="Icon.16x16"/>
-                    <bt:Image size="32" resid="Icon.32x32"/>
-                    <bt:Image size="80" resid="Icon.80x80"/>
+                    <bt:Image size="16" resid="IconTranslate.16x16"/>
+                    <bt:Image size="32" resid="IconTranslate.32x32"/>
+                    <bt:Image size="80" resid="IconTranslate.80x80"/>
                   </Icon>
                   <Action xsi:type="ShowTaskpane">
                     <SourceLocation resid="Taskpane.ComposeTranslateUrl"/>
@@ -106,9 +106,9 @@
                     <Description resid="TaskpaneButton.Tooltip"/>
                   </Supertip>
                   <Icon>
-                    <bt:Image size="16" resid="Icon.16x16"/>
-                    <bt:Image size="32" resid="Icon.32x32"/>
-                    <bt:Image size="80" resid="Icon.80x80"/>
+                    <bt:Image size="16" resid="IconAi.16x16"/>
+                    <bt:Image size="32" resid="IconAi.32x32"/>
+                    <bt:Image size="80" resid="IconAi.80x80"/>
                   </Icon>
                   <Action xsi:type="ShowTaskpane">
                     <SourceLocation resid="Taskpane.SummaryUrl"/>
@@ -121,9 +121,9 @@
                     <Description resid="ReadTranslateButton.Tooltip"/>
                   </Supertip>
                   <Icon>
-                    <bt:Image size="16" resid="Icon.16x16"/>
-                    <bt:Image size="32" resid="Icon.32x32"/>
-                    <bt:Image size="80" resid="Icon.80x80"/>
+                    <bt:Image size="16" resid="IconTranslate.16x16"/>
+                    <bt:Image size="32" resid="IconTranslate.32x32"/>
+                    <bt:Image size="80" resid="IconTranslate.80x80"/>
                   </Icon>
                   <Action xsi:type="ShowTaskpane">
                     <SourceLocation resid="Taskpane.ReadTranslateUrl"/>
@@ -136,9 +136,9 @@
                     <Description resid="ReadSummaryButton.Tooltip"/>
                   </Supertip>
                   <Icon>
-                    <bt:Image size="16" resid="Icon.16x16"/>
-                    <bt:Image size="32" resid="Icon.32x32"/>
-                    <bt:Image size="80" resid="Icon.80x80"/>
+                    <bt:Image size="16" resid="IconSummary.16x16"/>
+                    <bt:Image size="32" resid="IconSummary.32x32"/>
+                    <bt:Image size="80" resid="IconSummary.80x80"/>
                   </Icon>
                   <Action xsi:type="ShowTaskpane">
                     <SourceLocation resid="Taskpane.ReadSummaryUrl"/>
@@ -155,6 +155,18 @@
         <bt:Image id="Icon.16x16" DefaultValue="https://localhost:3000/assets/icon-16.png"/>
         <bt:Image id="Icon.32x32" DefaultValue="https://localhost:3000/assets/icon-32.png"/>
         <bt:Image id="Icon.80x80" DefaultValue="https://localhost:3000/assets/icon-80.png"/>
+        <bt:Image id="IconAi.16x16" DefaultValue="https://localhost:3000/assets/ribbon-ai-16.png"/>
+        <bt:Image id="IconAi.32x32" DefaultValue="https://localhost:3000/assets/ribbon-ai-32.png"/>
+        <bt:Image id="IconAi.80x80" DefaultValue="https://localhost:3000/assets/ribbon-ai-80.png"/>
+        <bt:Image id="IconImprove.16x16" DefaultValue="https://localhost:3000/assets/ribbon-improve-16.png"/>
+        <bt:Image id="IconImprove.32x32" DefaultValue="https://localhost:3000/assets/ribbon-improve-32.png"/>
+        <bt:Image id="IconImprove.80x80" DefaultValue="https://localhost:3000/assets/ribbon-improve-80.png"/>
+        <bt:Image id="IconTranslate.16x16" DefaultValue="https://localhost:3000/assets/ribbon-translate-16.png"/>
+        <bt:Image id="IconTranslate.32x32" DefaultValue="https://localhost:3000/assets/ribbon-translate-32.png"/>
+        <bt:Image id="IconTranslate.80x80" DefaultValue="https://localhost:3000/assets/ribbon-translate-80.png"/>
+        <bt:Image id="IconSummary.16x16" DefaultValue="https://localhost:3000/assets/ribbon-summary-16.png"/>
+        <bt:Image id="IconSummary.32x32" DefaultValue="https://localhost:3000/assets/ribbon-summary-32.png"/>
+        <bt:Image id="IconSummary.80x80" DefaultValue="https://localhost:3000/assets/ribbon-summary-80.png"/>
       </bt:Images>
       <bt:Urls>
         <bt:Url id="Commands.Url" DefaultValue="https://localhost:3000/commands.html"/>
