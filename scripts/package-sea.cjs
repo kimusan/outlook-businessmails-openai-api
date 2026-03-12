@@ -97,11 +97,11 @@ async function runPostject(executablePath, blobFilePath) {
   const localPostject = resolveLocalPostjectCommand();
 
   const postjectArgs = [
+    "--sentinel-fuse",
+    sentinelFuse,
     executablePath,
     "NODE_SEA_BLOB",
     blobFilePath,
-    "--sentinel-fuse",
-    sentinelFuse,
   ];
 
   let command = "";
