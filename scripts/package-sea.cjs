@@ -51,19 +51,25 @@ function resolveLocalPostjectCommand() {
 async function runPostject(executablePath, blobFilePath) {
   const blobBuffer = fs.readFileSync(blobFilePath);
   const sentinelFuse = "NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2";
+  let moduleInjectionError = null;
 
   try {
     const postject = require("postject");
     if (postject && typeof postject.inject === "function") {
       await postject.inject(executablePath, "NODE_SEA_BLOB", blobBuffer, {
         sentinelFuse,
+        overwrite: true,
       });
       return;
     }
   } catch (error) {
-    if (!error || error.code !== "MODULE_NOT_FOUND") {
-      throw new Error(`postject module invocation failed: ${error.message}`);
-    }
+    moduleInjectionError = error;
+  }
+
+  if (moduleInjectionError && moduleInjectionError.code !== "MODULE_NOT_FOUND") {
+    process.stderr.write(
+      `postject module API failed (${moduleInjectionError.message}); trying CLI fallback...\n`
+    );
   }
 
   const localPostject = resolveLocalPostjectCommand();
@@ -95,13 +101,19 @@ async function runPostject(executablePath, blobFilePath) {
   });
 
   if (result.error) {
-    throw new Error(`postject execution failed to start: ${result.error.message}`);
+    const modulePart = moduleInjectionError
+      ? ` Module error: ${moduleInjectionError.message}.`
+      : "";
+    throw new Error(`postject execution failed to start: ${result.error.message}.${modulePart}`);
   }
 
   if (result.status !== 0 || result.signal) {
     const exitCode = result.status === null ? "null" : String(result.status);
     const signal = result.signal ? `, signal ${result.signal}` : "";
-    throw new Error(`postject failed with exit code ${exitCode}${signal}.`);
+    const modulePart = moduleInjectionError
+      ? ` Module error: ${moduleInjectionError.message}.`
+      : "";
+    throw new Error(`postject failed with exit code ${exitCode}${signal}.${modulePart}`);
   }
 }
 
