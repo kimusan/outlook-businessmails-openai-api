@@ -6,8 +6,8 @@
   <DefaultLocale>en-US</DefaultLocale>
   <DisplayName DefaultValue="Outlook AI Assistant"/>
   <Description DefaultValue="Generate, improve, and translate business emails with an OpenAI-compatible API."/>
-  <IconUrl DefaultValue="https://localhost:3000/assets/icon-64.png"/>
-  <HighResolutionIconUrl DefaultValue="https://localhost:3000/assets/icon-128.png"/>
+  <IconUrl DefaultValue="https://localhost:3000/assets/addin-manager-64.png"/>
+  <HighResolutionIconUrl DefaultValue="https://localhost:3000/assets/addin-manager-128.png"/>
   <SupportUrl DefaultValue="https://github.com/kimusan/outlook-businessmails-openai-api"/>
   <AppDomains>
     <AppDomain>https://localhost:3000</AppDomain>
