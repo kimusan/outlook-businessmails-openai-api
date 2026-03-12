@@ -9,6 +9,10 @@ This Outlook add-in runs against an internal **OpenAI-compatible API** and is fo
 - Draft reply text from email thread context + user direction.
 - Improve existing draft language (tone, formality, length).
 - Improve reply drafts using referenced thread style/context.
+- Summarize selected/full read-mode email content with:
+  - participants (active/passive)
+  - executive summary
+  - detailed timeline (who says what)
 - Translate received or composed email text between:
   - English
   - Korean
@@ -24,6 +28,7 @@ Required settings:
 - Chat completions endpoint (full URL, typically ending with `/v1/chat/completions`)
 - Model name
 - UMS token
+- Summary/default translation language
 - Temperature
 
 Authentication flow:
@@ -38,6 +43,11 @@ Model discovery:
 
 - Add-in can fetch models from derived endpoint `/v1/model_list`.
 - You can still type a custom model manually.
+
+API connectivity check:
+
+- `Check API & refresh token` verifies token refresh only.
+- `Refresh model list` is a separate action.
 
 ## Prerequisites
 

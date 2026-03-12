@@ -110,3 +110,36 @@ export function buildTranslationMessages(
     },
   ];
 }
+
+export function buildSummaryMessages(
+  text: string,
+  outputLanguage: SupportedLanguage
+): ChatMessage[] {
+  const limitedText = limitWords(text, 1800);
+
+  return [
+    {
+      role: "system",
+      content:
+        "You summarize email content for busy professionals. Return concise, structured plain text only (no markdown tables).",
+    },
+    {
+      role: "user",
+      content:
+        `Summarize this email content in ${outputLanguage}. ` +
+        "If the content appears to be a thread, include all sections below. " +
+        "If it is a single email, still provide the same sections with best-effort details.\n\n" +
+        "Required sections in this exact order:\n" +
+        "1) Participants\n" +
+        "- Active participants: list names/emails who authored messages or replies.\n" +
+        "- Passive participants: list recipients/cc or mentioned stakeholders not actively writing.\n" +
+        "2) Executive summary\n" +
+        "- 3-6 bullets with key decisions, requests, deadlines, and risks.\n" +
+        "3) Detailed timeline (who says what)\n" +
+        "- Chronological bullets capturing major points by speaker.\n" +
+        "- Include open questions, unresolved items, and follow-ups.\n\n" +
+        "Do not invent facts. Mark uncertain details as unknown.\n\n" +
+        `Email content:\n${limitedText}`,
+    },
+  ];
+}

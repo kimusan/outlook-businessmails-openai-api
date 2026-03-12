@@ -128,7 +128,22 @@
                   <Action xsi:type="ShowTaskpane">
                     <SourceLocation resid="Taskpane.ReadTranslateUrl"/>
                   </Action>
-                </Control>               
+                </Control>
+                <Control xsi:type="Button" id="ReadSummaryButton">
+                  <Label resid="ReadSummaryButton.Label"/>
+                  <Supertip>
+                    <Title resid="ReadSummaryButton.Label"/>
+                    <Description resid="ReadSummaryButton.Tooltip"/>
+                  </Supertip>
+                  <Icon>
+                    <bt:Image size="16" resid="Icon.16x16"/>
+                    <bt:Image size="32" resid="Icon.32x32"/>
+                    <bt:Image size="80" resid="Icon.80x80"/>
+                  </Icon>
+                  <Action xsi:type="ShowTaskpane">
+                    <SourceLocation resid="Taskpane.ReadSummaryUrl"/>
+                  </Action>
+                </Control>
               </Group>
             </OfficeTab>
           </ExtensionPoint> 
@@ -148,6 +163,7 @@
         <bt:Url id="Taskpane.ComposeTranslateUrl" DefaultValue="https://localhost:3000/taskpane.html?action=compose&amp;workflow=translate&amp;scope=selection"/>
         <bt:Url id="Taskpane.SummaryUrl" DefaultValue="https://localhost:3000/taskpane.html?action=summary"/>
         <bt:Url id="Taskpane.ReadTranslateUrl" DefaultValue="https://localhost:3000/taskpane.html?action=summary&amp;workflow=translate&amp;scope=selection"/>
+        <bt:Url id="Taskpane.ReadSummaryUrl" DefaultValue="https://localhost:3000/taskpane.html?action=summary&amp;workflow=summary&amp;scope=selection"/>
       </bt:Urls>
       <bt:ShortStrings>
         <bt:String id="GroupLabelCompose" DefaultValue="Outlook AI Assistant"/>
@@ -156,12 +172,14 @@
         <bt:String id="ComposeImproveButton.Label" DefaultValue="Improve selection/draft"/>
         <bt:String id="ComposeTranslateButton.Label" DefaultValue="Translate selection/draft"/>
         <bt:String id="ReadTranslateButton.Label" DefaultValue="Translate selection/message"/>
+        <bt:String id="ReadSummaryButton.Label" DefaultValue="Summarize selection/message"/>
       </bt:ShortStrings>
       <bt:LongStrings>
-        <bt:String id="TaskpaneButton.Tooltip" DefaultValue="Open AI workflows to draft replies, improve drafts, and translate emails."/>
+        <bt:String id="TaskpaneButton.Tooltip" DefaultValue="Open AI workflows to draft replies, improve drafts, summarize, and translate emails."/>
         <bt:String id="ComposeImproveButton.Tooltip" DefaultValue="Open AI Assistant with improve-draft quick action. Uses selected text when available, otherwise full draft."/>
         <bt:String id="ComposeTranslateButton.Tooltip" DefaultValue="Open AI Assistant with translate quick action. Uses selected text when available, otherwise full draft."/>
         <bt:String id="ReadTranslateButton.Tooltip" DefaultValue="Open AI Assistant with translate quick action. Uses selected text when available, otherwise full message."/>
+        <bt:String id="ReadSummaryButton.Tooltip" DefaultValue="Open AI Assistant with summary quick action. Uses selected text when available, otherwise full message."/>
       </bt:LongStrings>
     </Resources>
   </VersionOverrides>

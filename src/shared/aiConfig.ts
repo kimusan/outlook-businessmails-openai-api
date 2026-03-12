@@ -1,10 +1,13 @@
 /* global Office, window */
 
+import type { SupportedLanguage } from "./promptBuilders";
+
 export interface AiServiceConfig {
   endpoint: string;
   model: string;
   temperature: number;
   umsToken: string;
+  preferredLanguage: SupportedLanguage;
 }
 
 export const DEFAULT_AI_CONFIG: AiServiceConfig = {
@@ -12,6 +15,7 @@ export const DEFAULT_AI_CONFIG: AiServiceConfig = {
   model: "gpt-4o-mini",
   temperature: 0.4,
   umsToken: "",
+  preferredLanguage: "English",
 };
 
 const STORAGE_KEY = "outlookAiAssistant.aiConfig";
@@ -35,6 +39,10 @@ function normalizeConfig(input: Partial<AiServiceConfig> | null | undefined): Ai
     temperature:
       typeof input.temperature === "number" ? input.temperature : DEFAULT_AI_CONFIG.temperature,
     umsToken: (input.umsToken || DEFAULT_AI_CONFIG.umsToken).trim(),
+    preferredLanguage: (input.preferredLanguage &&
+    ["English", "Korean", "Danish"].includes(input.preferredLanguage)
+      ? input.preferredLanguage
+      : DEFAULT_AI_CONFIG.preferredLanguage) as SupportedLanguage,
   };
 }
 
@@ -97,6 +105,10 @@ export function validateAiServiceConfig(config: AiServiceConfig): string | null 
 
   if (!config.umsToken.trim()) {
     return "UMS token is required.";
+  }
+
+  if (!["English", "Korean", "Danish"].includes(config.preferredLanguage)) {
+    return "Preferred language must be English, Korean, or Danish.";
   }
 
   return null;

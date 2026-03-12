@@ -3,6 +3,9 @@
 import * as React from "react";
 import {
   DefaultButton,
+  Dialog,
+  DialogFooter,
+  DialogType,
   Dropdown,
   IDropdownOption,
   MessageBar,
@@ -24,6 +27,7 @@ import {
   buildImproveDraftMessages,
   buildImproveReplyMessages,
   buildReplyDraftMessages,
+  buildSummaryMessages,
   buildTranslationMessages,
   FormalityOption,
   LengthOption,
@@ -52,7 +56,7 @@ export interface AppProps {
 }
 
 type HostMode = "compose" | "read";
-type Workflow = "replyDraft" | "improveDraft" | "improveReplyDraft" | "translate";
+type Workflow = "replyDraft" | "improveDraft" | "improveReplyDraft" | "translate" | "summary";
 type ContentScope = "body" | "selection";
 
 const toneOptions: IDropdownOption[] = [
@@ -104,10 +108,7 @@ function detectScopePreference(): ContentScope {
 function detectInitialWorkflow(hostMode: HostMode): Workflow {
   const url = new URL(window.location.href);
   const workflow = (url.searchParams.get("workflow") || "").toLowerCase();
-
-  if (hostMode === "read") {
-    return "translate";
-  }
+  const action = (url.searchParams.get("action") || "").toLowerCase();
 
   if (workflow === "replydraft") {
     return "replyDraft";
@@ -125,6 +126,14 @@ function detectInitialWorkflow(hostMode: HostMode): Workflow {
     return "translate";
   }
 
+  if (workflow === "summary") {
+    return "summary";
+  }
+
+  if (hostMode === "read") {
+    return action === "summary" ? "summary" : "translate";
+  }
+
   return "replyDraft";
 }
 
@@ -139,6 +148,10 @@ function getWorkflowLabel(workflow: Workflow): string {
 
   if (workflow === "improveReplyDraft") {
     return "Improve reply draft";
+  }
+
+  if (workflow === "summary") {
+    return "Summarize";
   }
 
   return "Translate";
@@ -177,7 +190,9 @@ export default function App(props: AppProps) {
   const [formality, setFormality] = React.useState<FormalityOption>("balanced");
   const [length, setLength] = React.useState<LengthOption>("medium");
   const [direction, setDirection] = React.useState<string>("");
-  const [targetLanguage, setTargetLanguage] = React.useState<SupportedLanguage>("English");
+  const [targetLanguage, setTargetLanguage] = React.useState<SupportedLanguage>(
+    initialConfig.preferredLanguage
+  );
   const [resultText, setResultText] = React.useState<string>("");
   const [statusText, setStatusText] = React.useState<string>("");
   const [errorText, setErrorText] = React.useState<string>("");
@@ -186,7 +201,12 @@ export default function App(props: AppProps) {
   const [isLoading, setIsLoading] = React.useState<boolean>(false);
   const [isSavingConfig, setIsSavingConfig] = React.useState<boolean>(false);
   const [isCheckingApi, setIsCheckingApi] = React.useState<boolean>(false);
+  const [isSummaryPopupVisible, setIsSummaryPopupVisible] = React.useState<boolean>(false);
   const isConfigReady = validateAiServiceConfig(config) === null;
+
+  React.useEffect(() => {
+    setTargetLanguage(config.preferredLanguage);
+  }, [config.preferredLanguage]);
 
   if (!isOfficeInitialized) {
     return (
@@ -265,7 +285,7 @@ export default function App(props: AppProps) {
     } finally {
       setIsLoadingModels(false);
     }
-  }, [config, logError]);
+  }, [config]);
 
   const onCheckApiAndRefreshToken = React.useCallback(async () => {
     try {
@@ -282,9 +302,7 @@ export default function App(props: AppProps) {
 
       setIsCheckingApi(true);
       await refreshAccessToken(config, true);
-      const models = await listAvailableModels(config);
-      setAvailableModels(models);
-      setModelListInfo(`API check succeeded. Token refreshed and ${models.length} models loaded.`);
+      setModelListInfo("API check succeeded and access token was refreshed.");
       setStatus("API check succeeded and access token was refreshed.");
     } catch (error) {
       logError("API check failed", error);
@@ -293,7 +311,7 @@ export default function App(props: AppProps) {
     } finally {
       setIsCheckingApi(false);
     }
-  }, [config, logError]);
+  }, [config]);
 
   const onSaveConfig = async () => {
     try {
@@ -335,7 +353,9 @@ export default function App(props: AppProps) {
           throw new Error("Could not find a thread context to reply to.");
         }
 
-        const output = await runAi(buildReplyDraftMessages(threadText, direction.trim(), tone, formality, length));
+        const output = await runAi(
+          buildReplyDraftMessages(threadText, direction.trim(), tone, formality, length)
+        );
         setResultText(output);
         setStatus("Reply draft generated.");
       }
@@ -388,6 +408,32 @@ export default function App(props: AppProps) {
         }
       }
 
+      if (workflow === "summary") {
+        let sourceText = await getCurrentBodyText();
+        let usedSelection = false;
+
+        if (preferredScope === "selection") {
+          const selectedText = await getSelectedTextOrEmpty();
+          if (selectedText.trim()) {
+            sourceText = selectedText;
+            usedSelection = true;
+          }
+        }
+
+        if (!sourceText.trim()) {
+          throw new Error("No email content found to summarize.");
+        }
+
+        const output = await runAi(buildSummaryMessages(sourceText, config.preferredLanguage));
+        setResultText(output);
+        setIsSummaryPopupVisible(true);
+        setStatus(
+          usedSelection
+            ? `Selection summarized in ${config.preferredLanguage}.`
+            : `Email summarized in ${config.preferredLanguage}.`
+        );
+      }
+
       if (workflow === "translate") {
         let sourceText = await getCurrentBodyText();
         let usedSelection = false;
@@ -406,7 +452,11 @@ export default function App(props: AppProps) {
 
         const output = await runAi(buildTranslationMessages(sourceText, targetLanguage));
         setResultText(output);
-        setStatus(usedSelection ? `Selection translated to ${targetLanguage}.` : `Translation to ${targetLanguage} completed.`);
+        setStatus(
+          usedSelection
+            ? `Selection translated to ${targetLanguage}.`
+            : `Translation to ${targetLanguage} completed.`
+        );
       }
     } catch (error) {
       logError(`Workflow ${workflow} failed`, error);
@@ -464,7 +514,9 @@ export default function App(props: AppProps) {
     <div className="ms-welcome">
       <main className="ms-welcome__main">
         <div className="taskpane-heading-row">
-          <h2 className="ms-font-xl ms-fontWeight-semilight ms-fontColor-neutralPrimary">Outlook AI Assistant</h2>
+          <h2 className="ms-font-xl ms-fontWeight-semilight ms-fontColor-neutralPrimary">
+            Outlook AI Assistant
+          </h2>
           <DefaultButton onClick={() => setIsConfigVisible(!isConfigVisible)}>
             {isConfigVisible ? "Hide configuration" : "Configuration"}
           </DefaultButton>
@@ -475,7 +527,8 @@ export default function App(props: AppProps) {
         </p>
         {preferredScope === "selection" && (
           <p className="taskpane-config-state">
-            Quick action scope: <b>Selection first</b> (falls back to full draft/message if nothing is selected)
+            Quick action scope: <b>Selection first</b> (falls back to full draft/message if nothing
+            is selected)
           </p>
         )}
 
@@ -488,16 +541,8 @@ export default function App(props: AppProps) {
               placeholder="https://internal-ai.example.com/v1/chat/completions"
               onChange={(_ev, value) => setConfig({ ...config, endpoint: value || "" })}
             />
-            <TextField
-              label="Model list endpoint"
-              value={modelListEndpointPreview}
-              readOnly
-            />
-            <TextField
-              label="Token refresh endpoint"
-              value={tokenRefreshEndpointPreview}
-              readOnly
-            />
+            <TextField label="Model list endpoint" value={modelListEndpointPreview} readOnly />
+            <TextField label="Token refresh endpoint" value={tokenRefreshEndpointPreview} readOnly />
             <TextField
               type="password"
               canRevealPassword
@@ -505,6 +550,18 @@ export default function App(props: AppProps) {
               label="UMS token"
               value={config.umsToken}
               onChange={(_ev, value) => setConfig({ ...config, umsToken: value || "" })}
+            />
+            <Dropdown
+              label="Summary/default translation language"
+              selectedKey={config.preferredLanguage}
+              options={languageOptions}
+              onChange={(_ev, option) => {
+                if (!option) {
+                  return;
+                }
+
+                setConfig({ ...config, preferredLanguage: option.key as SupportedLanguage });
+              }}
             />
             <div className="taskpane-actions">
               <DefaultButton onClick={onCheckApiAndRefreshToken} disabled={isCheckingApi}>
@@ -538,7 +595,8 @@ export default function App(props: AppProps) {
             )}
             {modelListError && (
               <MessageBar messageBarType={MessageBarType.warning} isMultiline>
-                Unable to load model list: {modelListError}. You can still enter a custom model manually.
+                Unable to load model list: {modelListError}. You can still enter a custom model
+                manually.
               </MessageBar>
             )}
             <SpinButton
@@ -589,7 +647,10 @@ export default function App(props: AppProps) {
             <Dropdown
               label="Choose action"
               selectedKey={workflow}
-              options={[{ key: "translate", text: "Translate received email" }]}
+              options={[
+                { key: "summary", text: "Summarize selected text/message" },
+                { key: "translate", text: "Translate selected text/message" },
+              ]}
               onChange={(_ev, option) => option && setWorkflow(option.key as Workflow)}
             />
           )}
@@ -687,6 +748,13 @@ export default function App(props: AppProps) {
             onChange={(_ev, value) => setResultText(value || "")}
             placeholder="Generated result will appear here"
           />
+          {workflow === "summary" && resultText.trim() && (
+            <div className="taskpane-actions">
+              <DefaultButton onClick={() => setIsSummaryPopupVisible(true)}>
+                Show summary popup
+              </DefaultButton>
+            </div>
+          )}
           {hostMode === "compose" && (
             <div className="taskpane-actions">
               <PrimaryButton onClick={onApplyToDraft} disabled={!resultText.trim()}>
@@ -699,6 +767,23 @@ export default function App(props: AppProps) {
           )}
         </div>
       </main>
+
+      <Dialog
+        hidden={!isSummaryPopupVisible}
+        onDismiss={() => setIsSummaryPopupVisible(false)}
+        dialogContentProps={{
+          type: DialogType.largeHeader,
+          title: `Summary (${config.preferredLanguage})`,
+          subText: "Generated from current selection/message content.",
+        }}
+        minWidth={640}
+        modalProps={{ isBlocking: false }}
+      >
+        <TextField multiline rows={16} value={resultText} readOnly />
+        <DialogFooter>
+          <PrimaryButton onClick={() => setIsSummaryPopupVisible(false)} text="Close" />
+        </DialogFooter>
+      </Dialog>
     </div>
   );
 }
