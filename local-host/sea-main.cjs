@@ -227,9 +227,9 @@ function createRequestHandler(staticDir, port) {
     }
 
     const contentType = getContentType(filePath);
-    const cacheControl = contentType.startsWith("text/html")
-      ? "no-cache, no-store, must-revalidate"
-      : "public, max-age=31536000, immutable";
+    // Use no-store for local deployment to avoid stale Outlook/WebView bundles
+    // when taskpane asset filenames are stable across builds.
+    const cacheControl = "no-cache, no-store, must-revalidate";
 
     try {
       const fileBuffer = fs.readFileSync(filePath);
@@ -237,6 +237,8 @@ function createRequestHandler(staticDir, port) {
         "Content-Type": contentType,
         "Content-Length": fileBuffer.length,
         "Cache-Control": cacheControl,
+        Pragma: "no-cache",
+        Expires: "0",
       });
 
       if (method === "HEAD") {

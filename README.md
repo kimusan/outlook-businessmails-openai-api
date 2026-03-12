@@ -195,6 +195,7 @@ Optional variables used by scripts/runtime:
   - Check `https://localhost:3000/health`.
   - Check `release/local-host/logs/host.log`.
   - Confirm localhost cert is trusted.
+  - After updates, restart Outlook and `msedgewebview2.exe` to clear stale add-in asset cache.
 - Port already in use:
   - Change `LOCAL_HOST_PORT` and regenerate manifest/runtime.
 - SEA packaging errors:
