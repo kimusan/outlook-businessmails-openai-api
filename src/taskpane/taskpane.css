@@ -62,6 +62,62 @@ body {
   gap: 8px;
 }
 
+.taskpane-markup-preview,
+.taskpane-markup-chat {
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  background: #ffffff;
+  padding: 10px;
+  overflow: auto;
+}
+
+.taskpane-markup-preview {
+  max-height: 220px;
+}
+
+.taskpane-markup-chat {
+  max-height: 320px;
+}
+
+.taskpane-markup h2,
+.taskpane-markup h3,
+.taskpane-markup h4 {
+  margin: 10px 0 6px;
+  color: #111827;
+}
+
+.taskpane-markup h2 {
+  font-size: 18px;
+}
+
+.taskpane-markup h3 {
+  font-size: 15px;
+}
+
+.taskpane-markup h4 {
+  font-size: 14px;
+}
+
+.taskpane-markup p {
+  margin: 6px 0;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.taskpane-markup ul {
+  margin: 6px 0 8px 22px;
+  padding: 0;
+}
+
+.taskpane-markup li {
+  margin: 4px 0;
+  line-height: 1.4;
+}
+
+.taskpane-markup .fmt-spacer {
+  height: 8px;
+}
+
 .ms-welcome__progress {
   padding: 8px 0;
 }

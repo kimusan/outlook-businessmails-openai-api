@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en" data-framework="typescript">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=Edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Outlook AI Result</title>
+  <script type="text/javascript" src="https://appsforoffice.microsoft.com/lib/1.1/hosted/office.js"></script>
+  <style>
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background: #f6f8fb;
+      color: #111827;
+      font-family: "Segoe UI", Tahoma, sans-serif;
+    }
+
+    .dialog-root {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+    }
+
+    .dialog-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 16px;
+      background: #ffffff;
+      border-bottom: 1px solid #d1d5db;
+    }
+
+    .dialog-title {
+      margin: 0;
+      font-size: 20px;
+      line-height: 1.2;
+    }
+
+    .dialog-meta {
+      margin: 4px 0 0;
+      font-size: 12px;
+      color: #4b5563;
+    }
+
+    .dialog-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .dialog-button {
+      border: 1px solid #c7d2fe;
+      background: #eef2ff;
+      color: #1e3a8a;
+      font-size: 13px;
+      border-radius: 4px;
+      padding: 6px 10px;
+      cursor: pointer;
+    }
+
+    .dialog-button:hover {
+      background: #e0e7ff;
+    }
+
+    .dialog-content {
+      flex: 1;
+      overflow: auto;
+      padding: 16px;
+    }
+
+    .dialog-markup {
+      background: #ffffff;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      padding: 16px;
+    }
+
+    .dialog-markup h2,
+    .dialog-markup h3,
+    .dialog-markup h4 {
+      margin: 14px 0 8px;
+      color: #111827;
+    }
+
+    .dialog-markup h2 {
+      font-size: 20px;
+    }
+
+    .dialog-markup h3 {
+      font-size: 17px;
+    }
+
+    .dialog-markup h4 {
+      font-size: 15px;
+    }
+
+    .dialog-markup p {
+      margin: 8px 0;
+      line-height: 1.5;
+      white-space: pre-wrap;
+    }
+
+    .dialog-markup ul {
+      margin: 6px 0 10px 22px;
+      padding: 0;
+    }
+
+    .dialog-markup li {
+      margin: 4px 0;
+      line-height: 1.45;
+    }
+
+    .dialog-markup .fmt-spacer {
+      height: 10px;
+    }
+
+    .dialog-status {
+      font-size: 12px;
+      color: #6b7280;
+      margin-left: 10px;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="dialog-root">
+    <header class="dialog-header">
+      <div>
+        <h1 id="dialog-title" class="dialog-title">AI Result</h1>
+        <p id="dialog-meta" class="dialog-meta">Waiting for content...</p>
+      </div>
+      <div class="dialog-actions">
+        <button id="copy-button" class="dialog-button" type="button">Copy</button>
+        <button id="close-button" class="dialog-button" type="button">Close</button>
+      </div>
+    </header>
+
+    <main class="dialog-content">
+      <section id="dialog-markup" class="dialog-markup">
+        <p>No content yet.</p>
+      </section>
+      <span id="dialog-status" class="dialog-status"></span>
+    </main>
+  </div>
+</body>
+
+</html>

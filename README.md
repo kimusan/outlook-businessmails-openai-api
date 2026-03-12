@@ -31,6 +31,9 @@ Runtime on target machine does **not** require a globally installed Node.js.
 - Improve draft and reply language with tone/formality/length controls.
 - Translate between English, Korean, and Danish.
 - Summarize selected/full emails (participants, executive summary, detailed timeline).
+- Selection-first behavior for summarize/translate/improve workflows, with full-body fallback.
+- Large Outlook dialog result window (outside taskpane) with structured heading/bullet rendering.
+- In-taskpane AI chat area for follow-up questions on current email/result context.
 - Selectable auth mode:
   - UMS token -> `/v1/token/refresh` -> access token flow
   - Direct API key as bearer token

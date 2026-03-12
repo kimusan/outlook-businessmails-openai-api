@@ -30,6 +30,7 @@ module.exports = async (env, options) => {
       polyfill: ["core-js/stable", "regenerator-runtime/runtime"],
       vendor: ["react", "react-dom", "core-js", "@fluentui/react"],
       taskpane: taskpaneEntry,
+      resultDialog: "./src/dialog/resultDialog.ts",
       commands: "./src/commands/commands.ts",
     },
     output: {
@@ -100,6 +101,11 @@ module.exports = async (env, options) => {
         filename: "commands.html",
         template: "./src/commands/commands.html",
         chunks: ["commands"],
+      }),
+      new HtmlWebpackPlugin({
+        filename: "result-dialog.html",
+        template: "./src/dialog/resultDialog.html",
+        chunks: ["resultDialog", "polyfill"],
       }),
       new webpack.ProvidePlugin({
         Promise: ["es6-promise", "Promise"],

@@ -1,11 +1,8 @@
-/* global require */
+/* global require, Office, window, navigator */
 
 import * as React from "react";
 import {
   DefaultButton,
-  Dialog,
-  DialogFooter,
-  DialogType,
   Dropdown,
   IDropdownOption,
   MessageBar,
@@ -24,6 +21,7 @@ import {
   splitDraftAndThread,
 } from "../../shared/outlookContext";
 import {
+  buildChatMessages,
   buildImproveDraftMessages,
   buildImproveReplyMessages,
   buildReplyDraftMessages,
@@ -50,6 +48,11 @@ import {
   listAvailableModels,
   refreshAccessToken,
 } from "../../shared/aiClient";
+import {
+  ResultDialogOutgoingMessage,
+  ResultDialogPayload,
+} from "../../shared/dialogMessages";
+import { formatStructuredTextAsHtml } from "../../shared/richText";
 
 export interface AppProps {
   title: string;
@@ -158,6 +161,35 @@ function getWorkflowLabel(workflow: Workflow): string {
   return "Translate";
 }
 
+function parseDialogMessage(raw: string): ResultDialogOutgoingMessage | null {
+  try {
+    const parsed = JSON.parse(raw) as ResultDialogOutgoingMessage;
+    if (parsed.type === "ready" || parsed.type === "close") {
+      return parsed;
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+function createDialogPayload(
+  title: string,
+  workflowLabel: string,
+  language: string,
+  text: string
+): ResultDialogPayload {
+  return {
+    type: "resultPayload",
+    title,
+    workflow: workflowLabel,
+    language,
+    generatedAt: new Date().toISOString(),
+    text,
+  };
+}
+
 export default function App(props: AppProps) {
   const { title, isOfficeInitialized } = props;
 
@@ -173,20 +205,6 @@ export default function App(props: AppProps) {
   const [isLoadingModels, setIsLoadingModels] = React.useState<boolean>(false);
   const [modelListError, setModelListError] = React.useState<string>("");
   const [modelListInfo, setModelListInfo] = React.useState<string>("");
-  const modelListEndpointPreview = React.useMemo(() => {
-    try {
-      return getModelListEndpoint(config.endpoint || "https://example.com/v1/chat/completions");
-    } catch {
-      return "Enter a valid endpoint URL to preview model list URL.";
-    }
-  }, [config.endpoint]);
-  const tokenRefreshEndpointPreview = React.useMemo(() => {
-    try {
-      return getTokenRefreshEndpoint(config.endpoint || "https://example.com/v1/chat/completions");
-    } catch {
-      return "Enter a valid endpoint URL to preview token refresh URL.";
-    }
-  }, [config.endpoint]);
   const [tone, setTone] = React.useState<ToneOption>("neutral");
   const [formality, setFormality] = React.useState<FormalityOption>("balanced");
   const [length, setLength] = React.useState<LengthOption>("medium");
@@ -195,6 +213,7 @@ export default function App(props: AppProps) {
     initialConfig.preferredLanguage
   );
   const [resultText, setResultText] = React.useState<string>("");
+  const [latestPayload, setLatestPayload] = React.useState<ResultDialogPayload | null>(null);
   const [statusText, setStatusText] = React.useState<string>("");
   const [errorText, setErrorText] = React.useState<string>("");
   const [debugLog, setDebugLog] = React.useState<string[]>([]);
@@ -202,12 +221,43 @@ export default function App(props: AppProps) {
   const [isLoading, setIsLoading] = React.useState<boolean>(false);
   const [isSavingConfig, setIsSavingConfig] = React.useState<boolean>(false);
   const [isCheckingApi, setIsCheckingApi] = React.useState<boolean>(false);
-  const [isSummaryPopupVisible, setIsSummaryPopupVisible] = React.useState<boolean>(false);
+  const [chatQuestion, setChatQuestion] = React.useState<string>("");
+  const [chatResponse, setChatResponse] = React.useState<string>("");
+  const [isChatLoading, setIsChatLoading] = React.useState<boolean>(false);
+  const dialogRef = React.useRef<Office.Dialog | null>(null);
   const isConfigReady = validateAiServiceConfig(config) === null;
+
+  const modelListEndpointPreview = React.useMemo(() => {
+    try {
+      return getModelListEndpoint(config.endpoint || "https://example.com/v1/chat/completions");
+    } catch {
+      return "Enter a valid endpoint URL to preview model list URL.";
+    }
+  }, [config.endpoint]);
+
+  const tokenRefreshEndpointPreview = React.useMemo(() => {
+    try {
+      return getTokenRefreshEndpoint(config.endpoint || "https://example.com/v1/chat/completions");
+    } catch {
+      return "Enter a valid endpoint URL to preview token refresh URL.";
+    }
+  }, [config.endpoint]);
 
   React.useEffect(() => {
     setTargetLanguage(config.preferredLanguage);
   }, [config.preferredLanguage]);
+
+  React.useEffect(() => {
+    return () => {
+      if (dialogRef.current) {
+        try {
+          dialogRef.current.close();
+        } catch {
+          // Ignore close errors during unload.
+        }
+      }
+    };
+  }, []);
 
   if (!isOfficeInitialized) {
     return (
@@ -229,11 +279,11 @@ export default function App(props: AppProps) {
     setStatusText(message);
   };
 
-  const appendDebugLog = (title: string, detailObject?: unknown) => {
+  const appendDebugLog = (entryTitle: string, detailObject?: unknown) => {
     const timestamp = new Date().toISOString();
     const detail = detailObject ? `\n${JSON.stringify(detailObject, null, 2)}` : "";
-    const entry = `[${timestamp}] ${title}${detail}`;
-    setDebugLog((previous) => [entry, ...previous].slice(0, 50));
+    const entry = `[${timestamp}] ${entryTitle}${detail}`;
+    setDebugLog((previous) => [entry, ...previous].slice(0, 80));
   };
 
   const logError = (context: string, error: unknown) => {
@@ -258,6 +308,121 @@ export default function App(props: AppProps) {
     }
 
     return createChatCompletion(config, messages);
+  };
+
+  const resolveWorkflowSourceText = async (
+    trySelectionFirst: boolean
+  ): Promise<{ text: string; usedSelection: boolean }> => {
+    if (trySelectionFirst) {
+      const selectedText = await getSelectedTextOrEmpty();
+      appendDebugLog("Selection probe", {
+        chars: selectedText.trim().length,
+        preview: selectedText.trim().slice(0, 120),
+      });
+
+      if (selectedText.trim()) {
+        return { text: selectedText, usedSelection: true };
+      }
+    }
+
+    const bodyText = await getCurrentBodyText();
+    return { text: bodyText, usedSelection: false };
+  };
+
+  const getResultDialogUrl = () => {
+    const currentUrl = new URL(window.location.href);
+    const cacheBust = currentUrl.searchParams.get("cb");
+    const dialogUrl = new URL(currentUrl.origin);
+    dialogUrl.pathname = "/result-dialog.html";
+    dialogUrl.search = "";
+
+    if (cacheBust) {
+      dialogUrl.searchParams.set("cb", cacheBust);
+    }
+
+    return dialogUrl.toString();
+  };
+
+  const postResultToDialog = (payload: ResultDialogPayload) => {
+    if (!dialogRef.current) {
+      return;
+    }
+
+    try {
+      dialogRef.current.messageChild(JSON.stringify(payload));
+    } catch (error) {
+      logError("Dialog message send failed", error);
+    }
+  };
+
+  const openOrUpdateResultDialog = async (payload: ResultDialogPayload) => {
+    if (!Office.context || !Office.context.ui || typeof Office.context.ui.displayDialogAsync !== "function") {
+      throw new Error("Outlook dialog API is unavailable in this client.");
+    }
+
+    if (dialogRef.current) {
+      postResultToDialog(payload);
+      return;
+    }
+
+    const url = getResultDialogUrl();
+    appendDebugLog("Opening result dialog", { url });
+
+    await new Promise<void>((resolve, reject) => {
+      Office.context.ui.displayDialogAsync(
+        url,
+        { width: 72, height: 86, displayInIframe: true },
+        (asyncResult) => {
+          if (asyncResult.status !== Office.AsyncResultStatus.Succeeded) {
+            const resultError = asyncResult.error as { message?: string; error?: number };
+            const errorMessage =
+              resultError.message || `Dialog API error code: ${String(resultError.error ?? "unknown")}`;
+            reject(new Error(errorMessage));
+            return;
+          }
+
+          const dialog = asyncResult.value;
+          dialogRef.current = dialog;
+
+          dialog.addEventHandler(Office.EventType.DialogEventReceived, () => {
+            if (dialogRef.current === dialog) {
+              dialogRef.current = null;
+            }
+          });
+
+          dialog.addEventHandler(Office.EventType.DialogMessageReceived, (eventArgs) => {
+            const messageEvent = eventArgs as { message: string };
+            const message = parseDialogMessage(messageEvent.message);
+            if (!message) {
+              return;
+            }
+
+            if (message.type === "ready") {
+              postResultToDialog(payload);
+              return;
+            }
+
+            if (message.type === "close") {
+              try {
+                dialog.close();
+              } catch {
+                // Ignore close errors.
+              }
+            }
+          });
+
+          // Safety send in case the ready message is delayed.
+          window.setTimeout(() => postResultToDialog(payload), 250);
+          resolve();
+        }
+      );
+    });
+  };
+
+  const presentResult = async (payload: ResultDialogPayload): Promise<void> => {
+    setResultText(payload.text);
+    setLatestPayload(payload);
+    await openOrUpdateResultDialog(payload);
   };
 
   const onRefreshModels = React.useCallback(async () => {
@@ -373,32 +538,30 @@ export default function App(props: AppProps) {
         const output = await runAi(
           buildReplyDraftMessages(threadText, direction.trim(), tone, formality, length)
         );
-        setResultText(output);
+        await presentResult(createDialogPayload("Generated reply draft", getWorkflowLabel(workflow), "Original", output));
         setStatus("Reply draft generated.");
       }
 
       if (workflow === "improveDraft") {
-        if (preferredScope === "selection") {
-          const selectedText = await getSelectedTextOrEmpty();
-          if (selectedText.trim()) {
-            const output = await runAi(buildImproveDraftMessages(selectedText, tone, formality, length));
-            setResultText(output);
-            setStatus("Selected text improved.");
-            return;
-          }
-        }
+        const source = await resolveWorkflowSourceText(true);
+        const sourceText = source.usedSelection
+          ? source.text
+          : splitDraftAndThread(source.text).draftText || source.text;
 
-        const bodyText = await getCurrentBodyText();
-        const replyContext = splitDraftAndThread(bodyText);
-        const draftText = replyContext.draftText || bodyText;
-
-        if (!draftText.trim()) {
+        if (!sourceText.trim()) {
           throw new Error("No draft text found to improve.");
         }
 
-        const output = await runAi(buildImproveDraftMessages(draftText, tone, formality, length));
-        setResultText(output);
-        setStatus("Draft improved.");
+        const output = await runAi(buildImproveDraftMessages(sourceText, tone, formality, length));
+        await presentResult(
+          createDialogPayload(
+            source.usedSelection ? "Improved selected text" : "Improved draft",
+            getWorkflowLabel(workflow),
+            "Original",
+            output
+          )
+        );
+        setStatus(source.usedSelection ? "Selected text improved." : "Draft improved.");
       }
 
       if (workflow === "improveReplyDraft") {
@@ -417,7 +580,9 @@ export default function App(props: AppProps) {
         }
 
         const output = await runAi(buildImproveReplyMessages(draftText, threadText, tone, formality, length));
-        setResultText(output);
+        await presentResult(
+          createDialogPayload("Improved reply draft", getWorkflowLabel(workflow), "Original", output)
+        );
         if (composeType.toLowerCase().includes("reply") || replyContext.threadText) {
           setStatus("Reply draft improved with thread style context.");
         } else {
@@ -426,51 +591,44 @@ export default function App(props: AppProps) {
       }
 
       if (workflow === "summary") {
-        let sourceText = await getCurrentBodyText();
-        let usedSelection = false;
-
-        if (preferredScope === "selection") {
-          const selectedText = await getSelectedTextOrEmpty();
-          if (selectedText.trim()) {
-            sourceText = selectedText;
-            usedSelection = true;
-          }
-        }
-
-        if (!sourceText.trim()) {
+        const source = await resolveWorkflowSourceText(true);
+        if (!source.text.trim()) {
           throw new Error("No email content found to summarize.");
         }
 
-        const output = await runAi(buildSummaryMessages(sourceText, config.preferredLanguage));
-        setResultText(output);
-        setIsSummaryPopupVisible(true);
+        const output = await runAi(buildSummaryMessages(source.text, config.preferredLanguage));
+        await presentResult(
+          createDialogPayload(
+            source.usedSelection ? "Summary of selected text" : "Summary of email",
+            getWorkflowLabel(workflow),
+            config.preferredLanguage,
+            output
+          )
+        );
         setStatus(
-          usedSelection
+          source.usedSelection
             ? `Selection summarized in ${config.preferredLanguage}.`
             : `Email summarized in ${config.preferredLanguage}.`
         );
       }
 
       if (workflow === "translate") {
-        let sourceText = await getCurrentBodyText();
-        let usedSelection = false;
-
-        if (preferredScope === "selection") {
-          const selectedText = await getSelectedTextOrEmpty();
-          if (selectedText.trim()) {
-            sourceText = selectedText;
-            usedSelection = true;
-          }
-        }
-
-        if (!sourceText.trim()) {
+        const source = await resolveWorkflowSourceText(true);
+        if (!source.text.trim()) {
           throw new Error("No email content found to translate.");
         }
 
-        const output = await runAi(buildTranslationMessages(sourceText, targetLanguage));
-        setResultText(output);
+        const output = await runAi(buildTranslationMessages(source.text, targetLanguage));
+        await presentResult(
+          createDialogPayload(
+            source.usedSelection ? "Translation of selected text" : "Translation of email",
+            getWorkflowLabel(workflow),
+            targetLanguage,
+            output
+          )
+        );
         setStatus(
-          usedSelection
+          source.usedSelection
             ? `Selection translated to ${targetLanguage}.`
             : `Translation to ${targetLanguage} completed.`
         );
@@ -526,6 +684,61 @@ export default function App(props: AppProps) {
       setError((error as Error).message);
     }
   };
+
+  const onOpenResultWindow = async () => {
+    try {
+      if (!latestPayload) {
+        throw new Error("No generated result is available.");
+      }
+
+      await openOrUpdateResultDialog(latestPayload);
+    } catch (error) {
+      logError("Opening result window failed", error);
+      setError((error as Error).message);
+    }
+  };
+
+  const onCopyLatestResult = async () => {
+    try {
+      if (!resultText.trim()) {
+        throw new Error("No generated result is available.");
+      }
+
+      if (!navigator.clipboard || typeof navigator.clipboard.writeText !== "function") {
+        throw new Error("Clipboard API is unavailable in this client.");
+      }
+
+      await navigator.clipboard.writeText(resultText);
+      setStatus("Result copied to clipboard.");
+    } catch (error) {
+      logError("Copy result failed", error);
+      setError((error as Error).message);
+    }
+  };
+
+  const onAskChat = async () => {
+    try {
+      if (!chatQuestion.trim()) {
+        throw new Error("Enter a question for chat.");
+      }
+
+      setIsChatLoading(true);
+      const source = await resolveWorkflowSourceText(true);
+      const output = await runAi(
+        buildChatMessages(source.text, resultText, chatQuestion.trim(), config.preferredLanguage)
+      );
+
+      setChatResponse(output);
+      setStatus(source.usedSelection ? "Chat response ready (selection context)." : "Chat response ready.");
+    } catch (error) {
+      logError("Chat failed", error);
+      setError((error as Error).message);
+    } finally {
+      setIsChatLoading(false);
+    }
+  };
+
+  const dialogMessageReady = latestPayload ? `${latestPayload.workflow} | ${latestPayload.language}` : "No result yet";
 
   return (
     <div className="ms-welcome">
@@ -782,6 +995,64 @@ export default function App(props: AppProps) {
 
         <div className="taskpane-section">
           <div className="taskpane-heading-row">
+            <h3>Latest result</h3>
+            <div className="taskpane-actions">
+              <DefaultButton onClick={onOpenResultWindow} disabled={!latestPayload}>
+                Open large window
+              </DefaultButton>
+              <DefaultButton onClick={onCopyLatestResult} disabled={!resultText.trim()}>
+                Copy
+              </DefaultButton>
+            </div>
+          </div>
+          <p className="taskpane-config-state">Status: {dialogMessageReady}</p>
+          <div className="taskpane-markup-preview">
+            <div
+              className="taskpane-markup"
+              dangerouslySetInnerHTML={{
+                __html: formatStructuredTextAsHtml(resultText || "No generated result yet."),
+              }}
+            />
+          </div>
+          {hostMode === "compose" && (
+            <div className="taskpane-actions">
+              <PrimaryButton onClick={onApplyToDraft} disabled={!resultText.trim()}>
+                Replace draft with result
+              </PrimaryButton>
+              <DefaultButton onClick={onInsertAtCursor} disabled={!resultText.trim()}>
+                Insert result at cursor
+              </DefaultButton>
+            </div>
+          )}
+        </div>
+
+        <div className="taskpane-section">
+          <h3>Chat with AI</h3>
+          <TextField
+            multiline
+            rows={4}
+            label="Ask a question about this email"
+            placeholder="Example: What are the top 3 unresolved actions and who owns each?"
+            value={chatQuestion}
+            onChange={(_ev, value) => setChatQuestion(value || "")}
+          />
+          <div className="taskpane-actions">
+            <PrimaryButton onClick={onAskChat} disabled={isChatLoading}>
+              {isChatLoading ? "Asking..." : "Ask AI"}
+            </PrimaryButton>
+          </div>
+          <div className="taskpane-markup-chat">
+            <div
+              className="taskpane-markup"
+              dangerouslySetInnerHTML={{
+                __html: formatStructuredTextAsHtml(chatResponse || "Chat response will appear here."),
+              }}
+            />
+          </div>
+        </div>
+
+        <div className="taskpane-section">
+          <div className="taskpane-heading-row">
             <h3>Debug log</h3>
             <div className="taskpane-actions">
               <DefaultButton onClick={() => setIsDebugVisible(!isDebugVisible)}>
@@ -795,58 +1066,13 @@ export default function App(props: AppProps) {
           {isDebugVisible && (
             <TextField
               multiline
-              rows={10}
+              rows={12}
               value={debugLog.length > 0 ? debugLog.join("\n\n-----\n\n") : "No log entries yet."}
               readOnly
             />
           )}
         </div>
-
-        <div className="taskpane-section">
-          <h3>Result</h3>
-          <TextField
-            multiline
-            rows={12}
-            value={resultText}
-            onChange={(_ev, value) => setResultText(value || "")}
-            placeholder="Generated result will appear here"
-          />
-          {workflow === "summary" && resultText.trim() && (
-            <div className="taskpane-actions">
-              <DefaultButton onClick={() => setIsSummaryPopupVisible(true)}>
-                Show summary popup
-              </DefaultButton>
-            </div>
-          )}
-          {hostMode === "compose" && (
-            <div className="taskpane-actions">
-              <PrimaryButton onClick={onApplyToDraft} disabled={!resultText.trim()}>
-                Replace draft with result
-              </PrimaryButton>
-              <DefaultButton onClick={onInsertAtCursor} disabled={!resultText.trim()}>
-                Insert result at cursor
-              </DefaultButton>
-            </div>
-          )}
-        </div>
       </main>
-
-      <Dialog
-        hidden={!isSummaryPopupVisible}
-        onDismiss={() => setIsSummaryPopupVisible(false)}
-        dialogContentProps={{
-          type: DialogType.largeHeader,
-          title: `Summary (${config.preferredLanguage})`,
-          subText: "Generated from current selection/message content.",
-        }}
-        minWidth={640}
-        modalProps={{ isBlocking: false }}
-      >
-        <TextField multiline rows={16} value={resultText} readOnly />
-        <DialogFooter>
-          <PrimaryButton onClick={() => setIsSummaryPopupVisible(false)} text="Close" />
-        </DialogFooter>
-      </Dialog>
     </div>
   );
 }
