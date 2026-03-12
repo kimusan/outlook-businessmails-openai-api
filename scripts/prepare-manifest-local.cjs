@@ -12,6 +12,16 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) {
 }
 
 const baseUrl = `https://localhost:${port}/`;
+const cacheBust = process.env.LOCAL_HOST_CACHE_BUST || Date.now().toString();
+
+function appendCacheBust(url) {
+  if (/[?&](?:amp;)?cb=/.test(url)) {
+    return url;
+  }
+
+  const separator = url.includes("?") ? "&amp;" : "?";
+  return `${url}${separator}cb=${encodeURIComponent(cacheBust)}`;
+}
 
 function main() {
   if (!fs.existsSync(sourceManifestPath)) {
@@ -27,12 +37,17 @@ function main() {
     .replace(
       /<AppDomain>https:\/\/localhost(?::\d+)?<\/AppDomain>/g,
       `<AppDomain>https://localhost:${port}</AppDomain>`
+    )
+    .replace(
+      /https:\/\/localhost:\d+\/(?:taskpane|commands)\.html(?:[^"]*)?/g,
+      (url) => appendCacheBust(url)
     );
 
   fs.writeFileSync(outputManifestPath, rewritten, "utf8");
 
   process.stdout.write(`Prepared local manifest at ${outputManifestPath}\n`);
   process.stdout.write(`Using base URL ${baseUrl}\n`);
+  process.stdout.write(`Using cache bust token ${cacheBust}\n`);
 }
 
 main();

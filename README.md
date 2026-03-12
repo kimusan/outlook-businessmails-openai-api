@@ -143,8 +143,9 @@ The server will fail fast if cert files are missing and logs the reason.
 ## Manifest handling
 
 - Manifest stays separate from the executable.
-- `npm run local:manifest` rewrites localhost URLs deterministically using `LOCAL_HOST_PORT` (default `3000`) and writes:
+- `npm run local:manifest` rewrites localhost URLs using `LOCAL_HOST_PORT` (default `3000`) and writes:
   - `release/local-host/manifest.xml`
+- Manifest generation also appends a `cb=<token>` query parameter to `taskpane.html`/`commands.html` URLs to force Outlook/WebView to fetch fresh UI assets after updates.
 - Sideload this generated manifest in Outlook.
 
 ## Runtime host behavior
