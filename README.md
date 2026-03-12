@@ -109,8 +109,9 @@ Certificate behavior:
 - You can provide your own cert/key via:
   - `LOCAL_CERT_PATH`
   - `LOCAL_CERT_KEY_PATH`
-- On target machines, trust `release/local-host/certs/localhost.cer` in:
+- On target machines, trust `release/local-host/certs/dev-ca.crt` in:
   - `Current User > Trusted Root Certification Authorities`
+- Optional: import `release/local-host/certs/localhost.cer` into `Current User > Trusted People`
 - Convenience script:
   - `npm run cert:trust`
 

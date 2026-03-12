@@ -86,8 +86,9 @@ async function main() {
 
   process.stdout.write(`Key:  ${keyOutputPath}\n`);
   process.stdout.write(`Cert: ${certOutputPath}\n`);
+  process.stdout.write(`CA:   ${path.join(certOutputDir, "dev-ca.crt")}\n`);
   process.stdout.write(
-    "Important: Import localhost.cer into Current User > Trusted Root Certification Authorities on target machines.\n"
+    "Important: Import dev-ca.crt into Current User > Trusted Root Certification Authorities on target machines.\n"
   );
 }
 

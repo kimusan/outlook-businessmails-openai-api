@@ -9,11 +9,17 @@ if ([string]::IsNullOrWhiteSpace($InstallDir)) {
 }
 
 $InstallDir = (Resolve-Path $InstallDir).Path
-$CertPath = Join-Path $InstallDir "certs\localhost.cer"
+$CaCertPath = Join-Path $InstallDir "certs\dev-ca.crt"
+$LeafCertPath = Join-Path $InstallDir "certs\localhost.cer"
 
-if (-not (Test-Path $CertPath)) {
-  throw "Certificate file not found: $CertPath"
+if (-not (Test-Path $CaCertPath)) {
+  throw "CA certificate file not found: $CaCertPath"
 }
 
-Import-Certificate -FilePath $CertPath -CertStoreLocation "Cert:\CurrentUser\Root" | Out-Null
-Write-Host "Trusted localhost certificate for current user: $CertPath"
+Import-Certificate -FilePath $CaCertPath -CertStoreLocation "Cert:\CurrentUser\Root" | Out-Null
+Write-Host "Trusted local CA certificate in CurrentUser\\Root: $CaCertPath"
+
+if (Test-Path $LeafCertPath) {
+  Import-Certificate -FilePath $LeafCertPath -CertStoreLocation "Cert:\CurrentUser\TrustedPeople" | Out-Null
+  Write-Host "Imported leaf certificate in CurrentUser\\TrustedPeople: $LeafCertPath"
+}
