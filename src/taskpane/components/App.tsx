@@ -37,7 +37,12 @@ import {
   saveAiServiceConfig,
   validateAiServiceConfig,
 } from "../../shared/aiConfig";
-import { createChatCompletion, getModelListEndpoint, listAvailableModels } from "../../shared/aiClient";
+import {
+  createChatCompletion,
+  getModelListEndpoint,
+  isAiClientError,
+  listAvailableModels,
+} from "../../shared/aiClient";
 
 export interface AppProps {
   title: string;
@@ -167,6 +172,8 @@ export default function App(props: AppProps) {
   const [resultText, setResultText] = React.useState<string>("");
   const [statusText, setStatusText] = React.useState<string>("");
   const [errorText, setErrorText] = React.useState<string>("");
+  const [debugLog, setDebugLog] = React.useState<string[]>([]);
+  const [isDebugVisible, setIsDebugVisible] = React.useState<boolean>(false);
   const [isLoading, setIsLoading] = React.useState<boolean>(false);
   const [isSavingConfig, setIsSavingConfig] = React.useState<boolean>(false);
   const isConfigReady = validateAiServiceConfig(config) === null;
@@ -189,6 +196,27 @@ export default function App(props: AppProps) {
   const setStatus = (message: string) => {
     setErrorText("");
     setStatusText(message);
+  };
+
+  const appendDebugLog = (title: string, detailObject?: unknown) => {
+    const timestamp = new Date().toISOString();
+    const detail = detailObject ? `\n${JSON.stringify(detailObject, null, 2)}` : "";
+    const entry = `[${timestamp}] ${title}${detail}`;
+    setDebugLog((previous) => [entry, ...previous].slice(0, 50));
+  };
+
+  const logError = (context: string, error: unknown) => {
+    if (isAiClientError(error)) {
+      appendDebugLog(`${context}: ${error.message}`, error.details);
+      return;
+    }
+
+    if (error instanceof Error) {
+      appendDebugLog(`${context}: ${error.message}`, { stack: error.stack });
+      return;
+    }
+
+    appendDebugLog(`${context}: non-error thrown`, { value: String(error) });
   };
 
   const runAi = async (messages: { role: "system" | "user" | "assistant"; content: string }[]) => {
@@ -216,6 +244,7 @@ export default function App(props: AppProps) {
       setAvailableModels(models);
       setModelListInfo(`Loaded ${models.length} models from API.`);
     } catch (error) {
+      logError("Model list fetch failed", error);
       setAvailableModels([]);
       setModelListError((error as Error).message);
     } finally {
@@ -236,6 +265,7 @@ export default function App(props: AppProps) {
       await onRefreshModels();
       setIsConfigVisible(false);
     } catch (error) {
+      logError("Configuration save failed", error);
       setError((error as Error).message);
     } finally {
       setIsSavingConfig(false);
@@ -336,6 +366,7 @@ export default function App(props: AppProps) {
         setStatus(usedSelection ? `Selection translated to ${targetLanguage}.` : `Translation to ${targetLanguage} completed.`);
       }
     } catch (error) {
+      logError(`Workflow ${workflow} failed`, error);
       setError((error as Error).message);
     } finally {
       setIsLoading(false);
@@ -363,6 +394,7 @@ export default function App(props: AppProps) {
 
       setStatus("Draft body updated.");
     } catch (error) {
+      logError("Apply to draft failed", error);
       setError((error as Error).message);
     }
   };
@@ -380,6 +412,7 @@ export default function App(props: AppProps) {
       await insertTextAtCursor(resultText);
       setStatus("Result inserted at cursor.");
     } catch (error) {
+      logError("Insert at cursor failed", error);
       setError((error as Error).message);
     }
   };
@@ -598,9 +631,31 @@ export default function App(props: AppProps) {
 
         {errorText && (
           <MessageBar messageBarType={MessageBarType.error} isMultiline>
-            {errorText}
+            {errorText} (open Debug log for technical details)
           </MessageBar>
         )}
+
+        <div className="taskpane-section">
+          <div className="taskpane-heading-row">
+            <h3>Debug log</h3>
+            <div className="taskpane-actions">
+              <DefaultButton onClick={() => setIsDebugVisible(!isDebugVisible)}>
+                {isDebugVisible ? "Hide" : "Show"}
+              </DefaultButton>
+              <DefaultButton onClick={() => setDebugLog([])} disabled={debugLog.length === 0}>
+                Clear
+              </DefaultButton>
+            </div>
+          </div>
+          {isDebugVisible && (
+            <TextField
+              multiline
+              rows={10}
+              value={debugLog.length > 0 ? debugLog.join("\n\n-----\n\n") : "No log entries yet."}
+              readOnly
+            />
+          )}
+        </div>
 
         <div className="taskpane-section">
           <h3>Result</h3>
