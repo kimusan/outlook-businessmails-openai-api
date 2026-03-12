@@ -2,11 +2,15 @@
 
 import type { SupportedLanguage } from "./promptBuilders";
 
+export type AuthMode = "umsToken" | "apiKey";
+
 export interface AiServiceConfig {
   endpoint: string;
   model: string;
   temperature: number;
+  authMode: AuthMode;
   umsToken: string;
+  apiKey: string;
   preferredLanguage: SupportedLanguage;
 }
 
@@ -14,7 +18,9 @@ export const DEFAULT_AI_CONFIG: AiServiceConfig = {
   endpoint: "",
   model: "gpt-4o-mini",
   temperature: 0.4,
+  authMode: "umsToken",
   umsToken: "",
+  apiKey: "",
   preferredLanguage: "English",
 };
 
@@ -33,12 +39,23 @@ function normalizeConfig(input: Partial<AiServiceConfig> | null | undefined): Ai
     return { ...DEFAULT_AI_CONFIG };
   }
 
+  const authMode: AuthMode =
+    input.authMode === "apiKey"
+      ? "apiKey"
+      : input.authMode === "umsToken"
+        ? "umsToken"
+        : input.apiKey && String(input.apiKey).trim()
+          ? "apiKey"
+          : "umsToken";
+
   return {
     endpoint: (input.endpoint || DEFAULT_AI_CONFIG.endpoint).trim(),
     model: (input.model || DEFAULT_AI_CONFIG.model).trim(),
     temperature:
       typeof input.temperature === "number" ? input.temperature : DEFAULT_AI_CONFIG.temperature,
+    authMode,
     umsToken: (input.umsToken || DEFAULT_AI_CONFIG.umsToken).trim(),
+    apiKey: (input.apiKey || DEFAULT_AI_CONFIG.apiKey).trim(),
     preferredLanguage: (input.preferredLanguage &&
     ["English", "Korean", "Danish"].includes(input.preferredLanguage)
       ? input.preferredLanguage
@@ -103,8 +120,12 @@ export function validateAiServiceConfig(config: AiServiceConfig): string | null 
     return "Model is required.";
   }
 
-  if (!config.umsToken.trim()) {
+  if (config.authMode === "umsToken" && !config.umsToken.trim()) {
     return "UMS token is required.";
+  }
+
+  if (config.authMode === "apiKey" && !config.apiKey.trim()) {
+    return "API key is required.";
   }
 
   if (!["English", "Korean", "Danish"].includes(config.preferredLanguage)) {

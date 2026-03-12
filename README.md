@@ -31,7 +31,9 @@ Runtime on target machine does **not** require a globally installed Node.js.
 - Improve draft and reply language with tone/formality/length controls.
 - Translate between English, Korean, and Danish.
 - Summarize selected/full emails (participants, executive summary, detailed timeline).
-- UMS token -> `/v1/token/refresh` -> access token flow.
+- Selectable auth mode:
+  - UMS token -> `/v1/token/refresh` -> access token flow
+  - Direct API key as bearer token
 - In-app debug log for API failures.
 
 ## Prerequisites for maintainers (build machine)

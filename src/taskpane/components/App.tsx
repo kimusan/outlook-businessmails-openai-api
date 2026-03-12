@@ -35,6 +35,7 @@ import {
   ToneOption,
 } from "../../shared/promptBuilders";
 import {
+  AuthMode,
   AiServiceConfig,
   DEFAULT_AI_CONFIG,
   loadAiServiceConfig,
@@ -269,8 +270,13 @@ export default function App(props: AppProps) {
         return;
       }
 
-      if (!config.umsToken.trim()) {
+      if (config.authMode === "umsToken" && !config.umsToken.trim()) {
         setModelListError("Set UMS token first to fetch models.");
+        return;
+      }
+
+      if (config.authMode === "apiKey" && !config.apiKey.trim()) {
+        setModelListError("Set API key first to fetch models.");
         return;
       }
 
@@ -296,14 +302,25 @@ export default function App(props: AppProps) {
         throw new Error("Set endpoint first to check API.");
       }
 
-      if (!config.umsToken.trim()) {
-        throw new Error("Set UMS token first to check API.");
-      }
-
       setIsCheckingApi(true);
-      await refreshAccessToken(config, true);
-      setModelListInfo("API check succeeded and access token was refreshed.");
-      setStatus("API check succeeded and access token was refreshed.");
+
+      if (config.authMode === "umsToken") {
+        if (!config.umsToken.trim()) {
+          throw new Error("Set UMS token first to check API.");
+        }
+
+        await refreshAccessToken(config, true);
+        setModelListInfo("API check succeeded and access token was refreshed.");
+        setStatus("API check succeeded and access token was refreshed.");
+      } else {
+        if (!config.apiKey.trim()) {
+          throw new Error("Set API key first to check API.");
+        }
+
+        await listAvailableModels(config);
+        setModelListInfo("API check succeeded with direct API key.");
+        setStatus("API check succeeded with direct API key.");
+      }
     } catch (error) {
       logError("API check failed", error);
       setModelListError((error as Error).message);
@@ -542,15 +559,50 @@ export default function App(props: AppProps) {
               onChange={(_ev, value) => setConfig({ ...config, endpoint: value || "" })}
             />
             <TextField label="Model list endpoint" value={modelListEndpointPreview} readOnly />
-            <TextField label="Token refresh endpoint" value={tokenRefreshEndpointPreview} readOnly />
-            <TextField
-              type="password"
-              canRevealPassword
-              revealPasswordAriaLabel="Show token"
-              label="UMS token"
-              value={config.umsToken}
-              onChange={(_ev, value) => setConfig({ ...config, umsToken: value || "" })}
+            <Dropdown
+              label="Authentication mode"
+              selectedKey={config.authMode}
+              options={[
+                { key: "umsToken", text: "UMS token (refresh to access token)" },
+                { key: "apiKey", text: "Direct API key" },
+              ]}
+              onChange={(_ev, option) => {
+                if (!option) {
+                  return;
+                }
+
+                setConfig({ ...config, authMode: option.key as AuthMode });
+              }}
             />
+            {config.authMode === "umsToken" && (
+              <>
+                <TextField label="Token refresh endpoint" value={tokenRefreshEndpointPreview} readOnly />
+                <TextField
+                  type="password"
+                  canRevealPassword
+                  revealPasswordAriaLabel="Show token"
+                  label="UMS token"
+                  value={config.umsToken}
+                  onChange={(_ev, value) => setConfig({ ...config, umsToken: value || "" })}
+                />
+                <p className="taskpane-config-state">UMS tokens are typically 40-50 characters.</p>
+              </>
+            )}
+            {config.authMode === "apiKey" && (
+              <>
+                <TextField
+                  type="password"
+                  canRevealPassword
+                  revealPasswordAriaLabel="Show API key"
+                  label="API key"
+                  value={config.apiKey}
+                  onChange={(_ev, value) => setConfig({ ...config, apiKey: value || "" })}
+                />
+                <p className="taskpane-config-state">
+                  Direct API keys are typically longer than 50 characters.
+                </p>
+              </>
+            )}
             <Dropdown
               label="Summary/default translation language"
               selectedKey={config.preferredLanguage}
@@ -565,15 +617,26 @@ export default function App(props: AppProps) {
             />
             <div className="taskpane-actions">
               <DefaultButton onClick={onCheckApiAndRefreshToken} disabled={isCheckingApi}>
-                {isCheckingApi ? "Checking API..." : "Check API & refresh token"}
+                {isCheckingApi
+                  ? "Checking API..."
+                  : config.authMode === "umsToken"
+                    ? "Check API & refresh token"
+                    : "Check API key"}
               </DefaultButton>
               <DefaultButton onClick={onRefreshModels} disabled={isLoadingModels}>
                 {isLoadingModels ? "Loading models..." : "Refresh model list"}
               </DefaultButton>
             </div>
-            <p className="taskpane-config-state">
-              Access token is fetched via `/v1/token/refresh` and kept only in memory.
-            </p>
+            {config.authMode === "umsToken" && (
+              <p className="taskpane-config-state">
+                Access token is fetched via `/v1/token/refresh` and kept only in memory.
+              </p>
+            )}
+            {config.authMode === "apiKey" && (
+              <p className="taskpane-config-state">
+                Direct API key is used as bearer token for model and chat requests.
+              </p>
+            )}
             {availableModels.length > 0 && (
               <Dropdown
                 label="Available models"

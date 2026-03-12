@@ -155,6 +155,23 @@ export async function refreshAccessToken(
   config: AiServiceConfig,
   forceRefresh = false
 ): Promise<string> {
+  if (config.authMode === "apiKey") {
+    const directApiKey = config.apiKey.trim();
+    if (!directApiKey) {
+      throw new AiClientError("API key is required when using API key authentication mode.", {
+        operation: "tokenRefresh",
+        url: config.endpoint,
+        method: "POST",
+        requestPayloadSummary: {
+          authMode: config.authMode,
+          hasApiKey: false,
+        },
+      });
+    }
+
+    return directApiKey;
+  }
+
   const cachedToken = forceRefresh ? null : getCachedAccessToken(config);
   if (cachedToken) {
     return cachedToken;
@@ -268,7 +285,7 @@ async function fetchWithAuth(config: AiServiceConfig, request: AuthorizedRequest
   let accessToken = await refreshAccessToken(config);
   let response = await execute(accessToken);
 
-  if (response.status === 401 || response.status === 403) {
+  if ((response.status === 401 || response.status === 403) && config.authMode === "umsToken") {
     accessToken = await refreshAccessToken(config, true);
     response = await execute(accessToken);
   }
