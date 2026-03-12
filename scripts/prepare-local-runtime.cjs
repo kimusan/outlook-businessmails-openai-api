@@ -38,16 +38,17 @@ function copyDirectoryRecursively(sourceDir, targetDir, shouldSkip) {
 }
 
 function copyRuntimeScripts() {
-  const filesToCopy = [
+  const scriptFilesToCopy = [
     "start-hidden.vbs",
     "install-startup.ps1",
     "remove-startup.ps1",
     "trust-local-cert.ps1",
   ];
+  const launcherFilesToCopy = ["install-startup.cmd", "remove-startup.cmd", "trust-local-cert.cmd"];
 
   fs.mkdirSync(scriptOutputDir, { recursive: true });
 
-  for (const fileName of filesToCopy) {
+  for (const fileName of scriptFilesToCopy) {
     const sourcePath = path.join(windowsScriptsDir, fileName);
     const targetPath = fileName === "start-hidden.vbs"
       ? path.join(outputDir, fileName)
@@ -55,6 +56,17 @@ function copyRuntimeScripts() {
 
     if (!fs.existsSync(sourcePath)) {
       throw new Error(`Missing runtime helper script: ${sourcePath}`);
+    }
+
+    fs.copyFileSync(sourcePath, targetPath);
+  }
+
+  for (const fileName of launcherFilesToCopy) {
+    const sourcePath = path.join(windowsScriptsDir, fileName);
+    const targetPath = path.join(outputDir, fileName);
+
+    if (!fs.existsSync(sourcePath)) {
+      throw new Error(`Missing runtime launcher script: ${sourcePath}`);
     }
 
     fs.copyFileSync(sourcePath, targetPath);
@@ -85,6 +97,8 @@ function writeRuntimeNotes() {
     "- www/                      (static add-in frontend assets)",
     "- certs/                    (localhost TLS key/cert)",
     "- scripts/                  (startup + cert helper scripts)",
+    "- trust-local-cert.cmd      (one-click cert trust for users without npm)",
+    "- install-startup.cmd       (one-click startup registration)",
     "",
     "Health endpoint:",
     `- https://localhost:${port}/health`,

@@ -95,6 +95,9 @@ After `npm run package:local:win`, runtime artifacts are prepared in:
 - `release/local-host/www/*` (static add-in files)
 - `release/local-host/certs/*`
 - `release/local-host/start-hidden.vbs`
+- `release/local-host/trust-local-cert.cmd`
+- `release/local-host/install-startup.cmd`
+- `release/local-host/remove-startup.cmd`
 - `release/local-host/scripts/*.ps1`
 - `release/local-host/host-config.json`
 - `release/local-host/logs/host.log` (created/updated at runtime)
@@ -114,6 +117,7 @@ Certificate behavior:
 - Optional: import `release/local-host/certs/localhost.cer` into `Current User > Trusted People`
 - Convenience script:
   - `npm run cert:trust`
+  - or for end users without npm: run `release/local-host/trust-local-cert.cmd`
 
 The server will fail fast if cert files are missing and logs the reason.
 
@@ -139,6 +143,18 @@ Local host entrypoint: `local-host/sea-main.cjs`
 - `start-hidden.vbs` launches `OutlookAiLocalHost.exe` without a visible console window.
 - `startup:install` creates a Startup shortcut that runs the hidden launcher via `wscript.exe`.
 - No admin rights are required for startup shortcut installation (current user Startup folder).
+- End users without npm can run:
+  - `release/local-host/install-startup.cmd`
+  - `release/local-host/remove-startup.cmd`
+
+## End-user quick setup (no npm required)
+
+From a packaged `release/local-host` folder on Windows:
+
+1. Run `trust-local-cert.cmd` (one-time certificate trust).
+2. Start host with `start-hidden.vbs` (or launch `OutlookAiLocalHost.exe`).
+3. Sideload `manifest.xml` in Outlook.
+4. Optional auto-start: run `install-startup.cmd`.
 
 ## Environment variables
 
