@@ -164,6 +164,7 @@ Optional variables used by scripts/runtime:
 - `LOCAL_CERT_PATH`
 - `LOCAL_CERT_KEY_PATH`
 - `SEA_NODE_EXE` (override node.exe used for SEA packaging)
+- `SEA_SENTINEL_FUSE` (optional override for postject sentinel fuse; default `NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2`)
 - `ADDIN_BASE_URL` (webpack manifest URL rewrite base, defaults to localhost)
 - `OUTLOOK_AI_HOST_DEBUG=1` (runtime stdout logging in addition to file logs)
 

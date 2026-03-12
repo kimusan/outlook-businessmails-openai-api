@@ -7,6 +7,7 @@ const blobPath = path.join(rootDir, ".sea", "sea-prep.blob");
 const outputDir = path.join(rootDir, "release", "local-host");
 const outputExePath = path.join(outputDir, "OutlookAiLocalHost.exe");
 const SEA_FUSE_ID = "fce680ab2cc467b6e072b8b5df1996b2";
+const DEFAULT_SENTINEL_FUSE = `NODE_SEA_FUSE_${SEA_FUSE_ID}`;
 
 function resolveNodeExecutablePath() {
   if (process.env.SEA_NODE_EXE) {
@@ -49,30 +50,13 @@ function resolveLocalPostjectCommand() {
   return fs.existsSync(localBin) ? localBin : null;
 }
 
-function resolveSentinelFuse(executablePath) {
-  const executableContents = fs.readFileSync(executablePath).toString("latin1");
-  const candidates = [
-    `NODE_SEA_FUSE_${SEA_FUSE_ID}`,
-    `POSTJECT_SENTINEL_${SEA_FUSE_ID}`,
-    `NODE_JS_FUSE_${SEA_FUSE_ID}`,
-  ];
-
-  for (const candidate of candidates) {
-    if (executableContents.includes(candidate)) {
-      return candidate;
-    }
-  }
-
-  throw new Error(
-    `The selected node executable does not contain a known SEA sentinel fuse (${candidates.join(
-      ", "
-    )}). Use SEA_NODE_EXE to point at an official Node.js node.exe binary that supports SEA.`
-  );
+function resolveSentinelFuse() {
+  return process.env.SEA_SENTINEL_FUSE || DEFAULT_SENTINEL_FUSE;
 }
 
 async function runPostject(executablePath, blobFilePath) {
   const blobBuffer = fs.readFileSync(blobFilePath);
-  const sentinelFuse = resolveSentinelFuse(executablePath);
+  const sentinelFuse = resolveSentinelFuse();
   let moduleInjectionError = null;
 
   try {
@@ -97,11 +81,11 @@ async function runPostject(executablePath, blobFilePath) {
   const localPostject = resolveLocalPostjectCommand();
 
   const postjectArgs = [
-    "--sentinel-fuse",
-    sentinelFuse,
     executablePath,
     "NODE_SEA_BLOB",
     blobFilePath,
+    "--sentinel-fuse",
+    sentinelFuse,
   ];
 
   let command = "";
