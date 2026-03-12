@@ -179,6 +179,12 @@ Optional variables used by scripts/runtime:
 - SEA packaging errors:
   - Ensure packaging is run on Windows.
   - Ensure `npm install` has installed `postject`.
+  - If sentinel/fuse errors appear, set `SEA_NODE_EXE` to an official Node `node.exe` (not a launcher/shim), then rerun packaging:
+
+```powershell
+$env:SEA_NODE_EXE = "C:\nodejs\node.exe"
+npm run sea:package
+```
 
 ## Limitations and assumptions
 
