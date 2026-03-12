@@ -10,6 +10,8 @@ node_modules
 dist
 lib
 release
+.sea
+.local-cert-home
 solution
 temp
 *.sppkg

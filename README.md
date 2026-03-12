@@ -2,113 +2,173 @@
 
 Maintainer: **Kim Schulz** (based on work by **Matteo Pagani**).
 
-This Outlook add-in runs against an internal **OpenAI-compatible API** and is focused on business email workflows in desktop/web Outlook.
+This project is an Outlook web add-in that runs against an OpenAI-compatible API and is designed to support both:
 
-## Features
+- `development` mode (`npm run start:desktop`)
+- `production-style local deployment` on Windows (self-contained host executable + local manifest)
 
-- Draft reply text from email thread context + user direction.
-- Improve existing draft language (tone, formality, length).
-- Improve reply drafts using referenced thread style/context.
-- Summarize selected/full read-mode email content with:
-  - participants (active/passive)
-  - executive summary
-  - detailed timeline (who says what)
-- Translate received or composed email text between:
-  - English
-  - Korean
-  - Danish
-- Show technical API failure details in the in-app Debug log.
+## Architecture
 
-## AI Configuration (UMS token flow)
+### Development flow
 
-The add-in is configured inside the task pane.
+- Uses webpack dev tooling and Office add-in debugging helpers.
+- Start with `npm run start:desktop`.
+- Intended for coding/debugging only.
 
-Required settings:
+### Production-style local flow (Windows)
 
-- Chat completions endpoint (full URL, typically ending with `/v1/chat/completions`)
-- Model name
-- UMS token
-- Summary/default translation language
-- Temperature
+- Build static add-in frontend assets with webpack production build.
+- Serve those assets from a dedicated local HTTPS host.
+- Package the local host into a self-contained Windows `.exe` via Node SEA.
+- Keep `manifest.xml` separate next to the executable.
+- Optional startup shortcut launches host automatically at Windows logon.
 
-Authentication flow:
+Runtime on target machine does **not** require a globally installed Node.js.
 
-1. User provides a UMS token.
-2. Add-in calls `POST /v1/token/refresh` with body `ums_token=TOKEN`.
-3. Response `access_token` is used as bearer token for API calls.
-4. Access token is kept only in memory (not persisted).
-5. If missing/expired, the add-in refreshes automatically.
+## Add-in capabilities
 
-Model discovery:
+- Draft reply text from thread context + user direction.
+- Improve draft and reply language with tone/formality/length controls.
+- Translate between English, Korean, and Danish.
+- Summarize selected/full emails (participants, executive summary, detailed timeline).
+- UMS token -> `/v1/token/refresh` -> access token flow.
+- In-app debug log for API failures.
 
-- Add-in can fetch models from derived endpoint `/v1/model_list`.
-- You can still type a custom model manually.
+## Prerequisites for maintainers (build machine)
 
-API connectivity check:
+- Node.js `20.x` or `22.x` recommended.
+- npm `10.x` recommended.
+- For SEA packaging to `.exe`, run packaging on **Windows**.
 
-- `Check API & refresh token` verifies token refresh only.
-- `Refresh model list` is a separate action.
+## Core scripts
 
-## Prerequisites
-
-Use a supported LTS Node version.
-
-- Node.js `20.x` or `22.x`
-- npm `10.x` (or compatible with selected Node LTS)
-
-Node `25.x` is not recommended for this add-in tooling.
-
-## Install
-
-```bash
-npm install
-```
-
-## Validate locally
-
-```bash
-npm run lint
-npm run build
-npm run validate
-```
-
-## Run locally (localhost:3000)
+### Existing dev scripts
 
 ```bash
 npm run start:desktop
-```
-
-Stop:
-
-```bash
 npm run stop
 ```
 
-## Windows startup helpers
+### Production local runtime prep
 
-Included helpers:
-
-- `start-local-addin.ps1`
-- `start-local-addin.cmd`
-
-Both scripts resolve repo path from script location, start the local host, log to `start-desktop.log`, and launch Outlook.
-
-Examples:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local-addin.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local-addin.ps1 -Visible
+```bash
+npm run build:web
+npm run local:runtime
+npm run local:manifest
+npm run local:certs
 ```
 
-```cmd
-start-local-addin.cmd
-start-local-addin.cmd --visible
+Or all at once:
+
+```bash
+npm run local:prepare
 ```
+
+### SEA packaging (Windows)
+
+```bash
+npm run sea:config
+npm run sea:blob
+npm run sea:package
+```
+
+Or full Windows packaging in one command:
+
+```bash
+npm run package:local:win
+```
+
+### Startup and cert helper scripts (Windows)
+
+```bash
+npm run startup:install
+npm run startup:remove
+npm run cert:trust
+```
+
+## Production local output
+
+After `npm run package:local:win`, runtime artifacts are prepared in:
+
+- `release/local-host/OutlookAiLocalHost.exe`
+- `release/local-host/manifest.xml`
+- `release/local-host/www/*` (static add-in files)
+- `release/local-host/certs/*`
+- `release/local-host/start-hidden.vbs`
+- `release/local-host/scripts/*.ps1`
+- `release/local-host/host-config.json`
+- `release/local-host/logs/host.log` (created/updated at runtime)
+
+## Local HTTPS and certificates
+
+The host only serves over HTTPS and only on localhost (`127.0.0.1`).
+
+Certificate behavior:
+
+- `npm run local:certs` generates a localhost certificate via `office-addin-dev-certs` by default.
+- You can provide your own cert/key via:
+  - `LOCAL_CERT_PATH`
+  - `LOCAL_CERT_KEY_PATH`
+- On target machines, trust `release/local-host/certs/localhost.cer` in:
+  - `Current User > Trusted Root Certification Authorities`
+- Convenience script:
+  - `npm run cert:trust`
+
+The server will fail fast if cert files are missing and logs the reason.
+
+## Manifest handling
+
+- Manifest stays separate from the executable.
+- `npm run local:manifest` rewrites localhost URLs deterministically using `LOCAL_HOST_PORT` (default `3000`) and writes:
+  - `release/local-host/manifest.xml`
+- Sideload this generated manifest in Outlook.
+
+## Runtime host behavior
+
+Local host entrypoint: `local-host/sea-main.cjs`
+
+- Serves static files from `www/`.
+- Listens on `https://127.0.0.1:<port>` only.
+- Health endpoint: `/health`.
+- Logs startup/errors to `logs/host.log`.
+- Exits clearly when port is busy or TLS assets are missing.
+
+## Silent startup on Windows
+
+- `start-hidden.vbs` launches `OutlookAiLocalHost.exe` without a visible console window.
+- `startup:install` creates a Startup shortcut that runs the hidden launcher via `wscript.exe`.
+- No admin rights are required for startup shortcut installation (current user Startup folder).
+
+## Environment variables
+
+Optional variables used by scripts/runtime:
+
+- `LOCAL_HOST_PORT` (default `3000`)
+- `LOCAL_CERT_PATH`
+- `LOCAL_CERT_KEY_PATH`
+- `SEA_NODE_EXE` (override node.exe used for SEA packaging)
+- `ADDIN_BASE_URL` (webpack manifest URL rewrite base, defaults to localhost)
+- `OUTLOOK_AI_HOST_DEBUG=1` (runtime stdout logging in addition to file logs)
 
 ## Troubleshooting
 
-- If AI requests fail, open the add-in **Debug log** section to inspect detailed request/response error info.
-- If sideloading fails in New Outlook, verify sideload policy support in your tenant/client channel.
+- Add-in not loading in Outlook:
+  - Verify `OutlookAiLocalHost.exe` is running.
+  - Check `https://localhost:3000/health`.
+  - Check `release/local-host/logs/host.log`.
+  - Confirm localhost cert is trusted.
+- Port already in use:
+  - Change `LOCAL_HOST_PORT` and regenerate manifest/runtime.
+- SEA packaging errors:
+  - Ensure packaging is run on Windows.
+  - Ensure `npm install` has installed `postject`.
+
+## Limitations and assumptions
+
+- SEA packaging to Windows `.exe` is implemented for Windows build machines.
+- `npm run sea:package` uses `npx postject` during build-time SEA injection.
+- Static assets are currently deployed as sibling files under `www/` (not embedded into SEA blob), which is intentional for maintainability and predictable Office add-in hosting.
+- HTTPS trust requires one-time local certificate trust on target machine.
 
 ## Inspiration
 
