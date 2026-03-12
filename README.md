@@ -78,6 +78,18 @@ Or full Windows packaging in one command:
 npm run package:local:win
 ```
 
+Create distribution zip (includes runtime + release README):
+
+```bash
+npm run release:zip
+```
+
+Or run full build + package + zip:
+
+```bash
+npm run package:local:win:zip
+```
+
 ### Startup and cert helper scripts (Windows)
 
 ```bash
@@ -101,6 +113,11 @@ After `npm run package:local:win`, runtime artifacts are prepared in:
 - `release/local-host/scripts/*.ps1`
 - `release/local-host/host-config.json`
 - `release/local-host/logs/host.log` (created/updated at runtime)
+- `release/local-host/README-LOCAL-DEPLOYMENT.md` (end-user deployment instructions)
+
+After `npm run release:zip`, distributable archive is created:
+
+- `release/outlook-ai-local-host-v<version>.zip`
 
 ## Local HTTPS and certificates
 
