@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">DS Retro Robot Logo</title>
+  <desc id="desc">A retro robot with DS letters on the stomach plate.</desc>
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="35%" r="70%">
+      <stop offset="0%" stop-color="#e8fff5"/>
+      <stop offset="100%" stop-color="#bad8ff"/>
+    </radialGradient>
+    <linearGradient id="metal" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#f4f6fa"/>
+      <stop offset="100%" stop-color="#b2bfd3"/>
+    </linearGradient>
+    <linearGradient id="panel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#98b6de"/>
+      <stop offset="100%" stop-color="#6e8db7"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="10" result="blur"/>
+      <feOffset in="blur" dx="0" dy="10" result="offset"/>
+      <feFlood flood-color="#2a3e5f" flood-opacity="0.25" result="flood"/>
+      <feComposite in="flood" in2="offset" operator="in" result="shadow"/>
+      <feMerge>
+        <feMergeNode in="shadow"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect x="0" y="0" width="1024" height="1024" fill="url(#bg)"/>
+
+  <g filter="url(#shadow)">
+    <circle cx="512" cy="540" r="320" fill="#ffffff" fill-opacity="0.38"/>
+
+    <rect x="490" y="170" width="44" height="78" rx="22" fill="#748eaa"/>
+    <circle cx="512" cy="152" r="24" fill="#ff7b57" stroke="#264a72" stroke-width="10"/>
+
+    <rect x="302" y="236" width="420" height="298" rx="76" fill="url(#metal)" stroke="#37557d" stroke-width="16"/>
+
+    <rect x="376" y="300" width="272" height="126" rx="26" fill="#2f4766"/>
+    <circle cx="440" cy="362" r="42" fill="#98f7ff" stroke="#172f4f" stroke-width="12"/>
+    <circle cx="584" cy="362" r="42" fill="#98f7ff" stroke="#172f4f" stroke-width="12"/>
+    <circle cx="428" cy="352" r="9" fill="#ffffff"/>
+    <circle cx="572" cy="352" r="9" fill="#ffffff"/>
+
+    <rect x="454" y="446" width="116" height="22" rx="11" fill="#172f4f"/>
+
+    <rect x="254" y="560" width="516" height="312" rx="92" fill="url(#metal)" stroke="#37557d" stroke-width="16"/>
+
+    <rect x="344" y="630" width="336" height="170" rx="28" fill="url(#panel)" stroke="#1f3f68" stroke-width="12"/>
+    <text x="512" y="742" text-anchor="middle" font-family="'Trebuchet MS', 'Verdana', sans-serif" font-size="122" font-weight="800" letter-spacing="3" fill="#f7fbff">DS</text>
+
+    <rect x="164" y="610" width="96" height="190" rx="40" fill="#c4cfdf" stroke="#37557d" stroke-width="14"/>
+    <rect x="764" y="610" width="96" height="190" rx="40" fill="#c4cfdf" stroke="#37557d" stroke-width="14"/>
+
+    <rect x="332" y="834" width="112" height="74" rx="26" fill="#7f97b5"/>
+    <rect x="580" y="834" width="112" height="74" rx="26" fill="#7f97b5"/>
+  </g>
+</svg>
