@@ -40,8 +40,10 @@ import {
 import {
   createChatCompletion,
   getModelListEndpoint,
+  getTokenRefreshEndpoint,
   isAiClientError,
   listAvailableModels,
+  refreshAccessToken,
 } from "../../shared/aiClient";
 
 export interface AppProps {
@@ -164,6 +166,13 @@ export default function App(props: AppProps) {
       return "Enter a valid endpoint URL to preview model list URL.";
     }
   }, [config.endpoint]);
+  const tokenRefreshEndpointPreview = React.useMemo(() => {
+    try {
+      return getTokenRefreshEndpoint(config.endpoint || "https://example.com/v1/chat/completions");
+    } catch {
+      return "Enter a valid endpoint URL to preview token refresh URL.";
+    }
+  }, [config.endpoint]);
   const [tone, setTone] = React.useState<ToneOption>("neutral");
   const [formality, setFormality] = React.useState<FormalityOption>("balanced");
   const [length, setLength] = React.useState<LengthOption>("medium");
@@ -176,6 +185,7 @@ export default function App(props: AppProps) {
   const [isDebugVisible, setIsDebugVisible] = React.useState<boolean>(false);
   const [isLoading, setIsLoading] = React.useState<boolean>(false);
   const [isSavingConfig, setIsSavingConfig] = React.useState<boolean>(false);
+  const [isCheckingApi, setIsCheckingApi] = React.useState<boolean>(false);
   const isConfigReady = validateAiServiceConfig(config) === null;
 
   if (!isOfficeInitialized) {
@@ -239,6 +249,11 @@ export default function App(props: AppProps) {
         return;
       }
 
+      if (!config.umsToken.trim()) {
+        setModelListError("Set UMS token first to fetch models.");
+        return;
+      }
+
       setIsLoadingModels(true);
       const models = await listAvailableModels(config);
       setAvailableModels(models);
@@ -250,7 +265,35 @@ export default function App(props: AppProps) {
     } finally {
       setIsLoadingModels(false);
     }
-  }, [config]);
+  }, [config, logError]);
+
+  const onCheckApiAndRefreshToken = React.useCallback(async () => {
+    try {
+      setModelListError("");
+      setModelListInfo("");
+
+      if (!config.endpoint.trim()) {
+        throw new Error("Set endpoint first to check API.");
+      }
+
+      if (!config.umsToken.trim()) {
+        throw new Error("Set UMS token first to check API.");
+      }
+
+      setIsCheckingApi(true);
+      await refreshAccessToken(config, true);
+      const models = await listAvailableModels(config);
+      setAvailableModels(models);
+      setModelListInfo(`API check succeeded. Token refreshed and ${models.length} models loaded.`);
+      setStatus("API check succeeded and access token was refreshed.");
+    } catch (error) {
+      logError("API check failed", error);
+      setModelListError((error as Error).message);
+      setError((error as Error).message);
+    } finally {
+      setIsCheckingApi(false);
+    }
+  }, [config, logError]);
 
   const onSaveConfig = async () => {
     try {
@@ -450,11 +493,30 @@ export default function App(props: AppProps) {
               value={modelListEndpointPreview}
               readOnly
             />
+            <TextField
+              label="Token refresh endpoint"
+              value={tokenRefreshEndpointPreview}
+              readOnly
+            />
+            <TextField
+              type="password"
+              canRevealPassword
+              revealPasswordAriaLabel="Show token"
+              label="UMS token"
+              value={config.umsToken}
+              onChange={(_ev, value) => setConfig({ ...config, umsToken: value || "" })}
+            />
             <div className="taskpane-actions">
-              <DefaultButton onClick={onRefreshModels} disabled={isLoadingModels || !config.endpoint.trim()}>
+              <DefaultButton onClick={onCheckApiAndRefreshToken} disabled={isCheckingApi}>
+                {isCheckingApi ? "Checking API..." : "Check API & refresh token"}
+              </DefaultButton>
+              <DefaultButton onClick={onRefreshModels} disabled={isLoadingModels}>
                 {isLoadingModels ? "Loading models..." : "Refresh model list"}
               </DefaultButton>
             </div>
+            <p className="taskpane-config-state">
+              Access token is fetched via `/v1/token/refresh` and kept only in memory.
+            </p>
             {availableModels.length > 0 && (
               <Dropdown
                 label="Available models"
@@ -478,47 +540,6 @@ export default function App(props: AppProps) {
               <MessageBar messageBarType={MessageBarType.warning} isMultiline>
                 Unable to load model list: {modelListError}. You can still enter a custom model manually.
               </MessageBar>
-            )}
-            <Dropdown
-              label="Authentication mode"
-              selectedKey={config.authMode}
-              options={[
-                { key: "bearer", text: "Bearer token (Authorization header)" },
-                { key: "customHeader", text: "Custom header" },
-                { key: "none", text: "None" },
-              ]}
-              onChange={(_ev, option) => {
-                if (!option) {
-                  return;
-                }
-
-                setConfig({ ...config, authMode: option.key as "bearer" | "customHeader" | "none" });
-              }}
-            />
-            {config.authMode !== "none" && (
-              <TextField
-                type="password"
-                canRevealPassword
-                revealPasswordAriaLabel="Show password"
-                label="API key"
-                value={config.apiKey}
-                onChange={(_ev, value) => setConfig({ ...config, apiKey: value || "" })}
-              />
-            )}
-            {config.authMode === "customHeader" && (
-              <TextField
-                label="API key header name"
-                value={config.apiKeyHeader}
-                onChange={(_ev, value) => setConfig({ ...config, apiKeyHeader: value || "" })}
-              />
-            )}
-            {(config.authMode === "bearer" || config.authMode === "customHeader") && (
-              <TextField
-                label="Optional API key prefix"
-                value={config.apiKeyPrefix}
-                placeholder="Example: Token"
-                onChange={(_ev, value) => setConfig({ ...config, apiKeyPrefix: value || "" })}
-              />
             )}
             <SpinButton
               label="Temperature"

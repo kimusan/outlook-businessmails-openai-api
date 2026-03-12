@@ -1,65 +1,60 @@
 # Outlook Business Mails AI Add-in
 
-This repository contains a Microsoft Outlook add-in focused on business email workflows powered by an **OpenAI-compatible API** endpoint.
+Maintainer: **Kim Schulz** (based on work by **Matteo Pagani**).
 
-The add-in is intended for internal/private AI services and supports configurable endpoint/auth settings instead of hard-coding OpenAI-hosted service usage.
+This Outlook add-in runs against an internal **OpenAI-compatible API** and is focused on business email workflows in desktop/web Outlook.
 
-## What this add-in does
+## Features
 
-- Drafts reply text from the current thread plus user-provided direction.
-- Improves existing draft text with configurable writing style.
-- Improves existing reply draft text with style inferred from referenced thread content.
-- Translates email content between English, Korean, and Danish.
-- Supports both read-mode and compose-mode taskpane scenarios.
+- Draft reply text from email thread context + user direction.
+- Improve existing draft language (tone, formality, length).
+- Improve reply drafts using referenced thread style/context.
+- Translate received or composed email text between:
+  - English
+  - Korean
+  - Danish
+- Show technical API failure details in the in-app Debug log.
 
-## AI service configuration
+## AI Configuration (UMS token flow)
 
-The taskpane provides a configuration panel with:
+The add-in is configured inside the task pane.
 
-- Chat completions endpoint URL (OpenAI-compatible)
+Required settings:
+
+- Chat completions endpoint (full URL, typically ending with `/v1/chat/completions`)
 - Model name
-- Authentication mode (`Bearer`, `Custom header`, `None`)
-- API key + optional prefix
+- UMS token
 - Temperature
 
-Model support:
+Authentication flow:
 
-- The configuration can query available models from a derived `.../v1/model_list` endpoint.
-- You can refresh model list manually from the config panel.
-- You can always type a custom model, even if model list loading fails or the model is not listed.
+1. User provides a UMS token.
+2. Add-in calls `POST /v1/token/refresh` with body `ums_token=TOKEN`.
+3. Response `access_token` is used as bearer token for API calls.
+4. Access token is kept only in memory (not persisted).
+5. If missing/expired, the add-in refreshes automatically.
 
-Settings are stored in Office roaming settings when available, with localStorage fallback.
+Model discovery:
 
-## Current toolchain and key dependencies
+- Add-in can fetch models from derived endpoint `/v1/model_list`.
+- You can still type a custom model manually.
 
-Recommended local environment:
+## Prerequisites
 
-- Node.js `20.x` (LTS)
-- npm `10.x`
+Use a supported LTS Node version.
 
-Project tooling (from `package.json`):
+- Node.js `20.x` or `22.x`
+- npm `10.x` (or compatible with selected Node LTS)
 
-- `office-addin-cli` `^2.0.6`
-- `office-addin-debugging` `^6.0.6`
-- `office-addin-dev-certs` `^2.0.6`
-- `office-addin-lint` `^3.0.6`
-- `office-addin-manifest` `^2.1.2`
-- `office-addin-prettier-config` `^2.0.1`
+Node `25.x` is not recommended for this add-in tooling.
 
-UI/runtime libraries:
-
-- `react` `^17.0.2`
-- `@fluentui/react` `^8.52.3`
-
-## Local development
-
-Install dependencies:
+## Install
 
 ```bash
 npm install
 ```
 
-Run checks:
+## Validate locally
 
 ```bash
 npm run lint
@@ -67,92 +62,46 @@ npm run build
 npm run validate
 ```
 
-Sideload into Outlook Desktop:
+## Run locally (localhost:3000)
 
 ```bash
 npm run start:desktop
 ```
 
-Stop sideloading/debug session:
+Stop:
 
 ```bash
 npm run stop
 ```
 
-### Windows local auto-start helper
+## Windows startup helpers
 
-This repo includes:
+Included helpers:
 
-- [start-local-addin.ps1](/home/kim/repo/github/outlook-businessmails-openai/start-local-addin.ps1)
-- [start-local-addin.cmd](/home/kim/repo/github/outlook-businessmails-openai/start-local-addin.cmd)
+- `start-local-addin.ps1`
+- `start-local-addin.cmd`
 
-What it does:
+Both scripts resolve repo path from script location, start the local host, log to `start-desktop.log`, and launch Outlook.
 
-- Uses the script folder as repo path.
-- Resolves `npm.cmd` preferring `C:\nodejs\npm.cmd` (or recursive `C:\nodejs\...\npm.cmd`), then `PATH`, then standard Node install paths.
-- Starts `npm run start:desktop` in a hidden `cmd` process.
-- Waits for port `3000` to enter `LISTENING` state before opening Outlook (with timeout fallback).
-- Writes output to `start-desktop.log`.
-- Opens Outlook after startup delay.
-
-Run PowerShell version manually:
+Examples:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local-addin.ps1
-```
-
-Run PowerShell helper with visible host console (debug startup issues):
-
-```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\start-local-addin.ps1 -Visible
 ```
 
-Run CMD version manually:
-
 ```cmd
 start-local-addin.cmd
-```
-
-Run CMD helper with visible host console:
-
-```cmd
 start-local-addin.cmd --visible
 ```
 
-Optional: run it automatically at logon using Task Scheduler:
+## Troubleshooting
 
-```powershell
-$repo = "C:\path\to\outlook-businessmails-openai"
-$action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$repo\start-local-addin.ps1`""
-$trigger = New-ScheduledTaskTrigger -AtLogOn
-Register-ScheduledTask -TaskName "Outlook AI Local Addin" -Action $action -Trigger $trigger -Description "Start local Outlook AI add-in host and open Outlook"
-```
-
-## Deploy as an installable add-in (tenant/internal)
-
-Outlook web add-ins are installed via hosted web assets + manifest deployment (not via native installer binaries).
-
-1. Host the add-in web app on HTTPS.
-2. Update `manifest.xml` production URLs (taskpane/commands/icons/support URL).
-3. Validate manifest: `npm run validate`.
-4. Deploy manifest through Microsoft 365 admin center (`Integrated apps`) to users/groups.
-
-## Runtime verification checklist
-
-- Compose new email:
-  - Improve draft
-  - Translate draft
-- Reply to email:
-  - Draft reply from thread + direction
-  - Improve reply draft (thread-aware)
-- Read existing email:
-  - Translate received content
-- Compose apply actions:
-  - Replace draft with result
-  - Insert result at cursor
+- If AI requests fail, open the add-in **Debug log** section to inspect detailed request/response error info.
+- If sideloading fails in New Outlook, verify sideload policy support in your tenant/client channel.
 
 ## Inspiration
 
-This project is inspired by the original Outlook/OpenAI sample repository:
+Original project:
 
 - https://github.com/qmatteoq/outlook-businessmails-openai

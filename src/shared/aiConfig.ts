@@ -1,25 +1,17 @@
 /* global Office, window */
 
-export type AuthMode = "bearer" | "customHeader" | "none";
-
 export interface AiServiceConfig {
   endpoint: string;
   model: string;
   temperature: number;
-  authMode: AuthMode;
-  apiKey: string;
-  apiKeyHeader: string;
-  apiKeyPrefix: string;
+  umsToken: string;
 }
 
 export const DEFAULT_AI_CONFIG: AiServiceConfig = {
   endpoint: "",
   model: "gpt-4o-mini",
   temperature: 0.4,
-  authMode: "bearer",
-  apiKey: "",
-  apiKeyHeader: "api-key",
-  apiKeyPrefix: "",
+  umsToken: "",
 };
 
 const STORAGE_KEY = "outlookAiAssistant.aiConfig";
@@ -42,10 +34,7 @@ function normalizeConfig(input: Partial<AiServiceConfig> | null | undefined): Ai
     model: (input.model || DEFAULT_AI_CONFIG.model).trim(),
     temperature:
       typeof input.temperature === "number" ? input.temperature : DEFAULT_AI_CONFIG.temperature,
-    authMode: (input.authMode || DEFAULT_AI_CONFIG.authMode) as AuthMode,
-    apiKey: input.apiKey || DEFAULT_AI_CONFIG.apiKey,
-    apiKeyHeader: (input.apiKeyHeader || DEFAULT_AI_CONFIG.apiKeyHeader).trim(),
-    apiKeyPrefix: (input.apiKeyPrefix || DEFAULT_AI_CONFIG.apiKeyPrefix).trim(),
+    umsToken: (input.umsToken || DEFAULT_AI_CONFIG.umsToken).trim(),
   };
 }
 
@@ -106,12 +95,8 @@ export function validateAiServiceConfig(config: AiServiceConfig): string | null 
     return "Model is required.";
   }
 
-  if (config.authMode !== "none" && !config.apiKey.trim()) {
-    return "API key is required for selected auth mode.";
-  }
-
-  if (config.authMode === "customHeader" && !config.apiKeyHeader.trim()) {
-    return "API key header name is required for custom header auth mode.";
+  if (!config.umsToken.trim()) {
+    return "UMS token is required.";
   }
 
   return null;

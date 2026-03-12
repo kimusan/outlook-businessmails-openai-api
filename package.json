@@ -3,8 +3,9 @@
   "version": "0.0.1",
   "repository": {
     "type": "git",
-    "url": "https://github.com/OfficeDev/Office-Addin-TaskPane-React.git"
+    "url": "https://github.com/kimusan/outlook-businessmails-openai-api.git"
   },
+  "author": "Kim Schulz (based on work by Matteo Pagani)",
   "license": "MIT",
   "config": {
     "app_to_debug": "outlook",

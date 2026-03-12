@@ -11,7 +11,7 @@ initializeIcons();
 
 let isOfficeInitialized = false;
 
-const title = "Contoso Task Pane Add-in";
+const title = "Outlook AI Assistant by Kim Schulz";
 
 const render = (Component) => {
   ReactDOM.render(
