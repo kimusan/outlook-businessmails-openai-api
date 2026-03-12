@@ -48,7 +48,24 @@ function resolveLocalPostjectCommand() {
   return fs.existsSync(localBin) ? localBin : null;
 }
 
-function runPostject(executablePath, blobFilePath) {
+async function runPostject(executablePath, blobFilePath) {
+  const blobBuffer = fs.readFileSync(blobFilePath);
+  const sentinelFuse = "NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2";
+
+  try {
+    const postject = require("postject");
+    if (postject && typeof postject.inject === "function") {
+      await postject.inject(executablePath, "NODE_SEA_BLOB", blobBuffer, {
+        sentinelFuse,
+      });
+      return;
+    }
+  } catch (error) {
+    if (!error || error.code !== "MODULE_NOT_FOUND") {
+      throw new Error(`postject module invocation failed: ${error.message}`);
+    }
+  }
+
   const localPostject = resolveLocalPostjectCommand();
 
   const postjectArgs = [
@@ -56,7 +73,7 @@ function runPostject(executablePath, blobFilePath) {
     "NODE_SEA_BLOB",
     blobFilePath,
     "--sentinel-fuse",
-    "NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2",
+    sentinelFuse,
   ];
 
   let command = "";
@@ -88,7 +105,7 @@ function runPostject(executablePath, blobFilePath) {
   }
 }
 
-function main() {
+async function main() {
   if (process.platform !== "win32") {
     throw new Error(
       "SEA Windows packaging must run on Windows (win32). Build this package on a Windows machine."
@@ -107,9 +124,12 @@ function main() {
   }
 
   fs.copyFileSync(nodeExecutablePath, outputExePath);
-  runPostject(outputExePath, blobPath);
+  await runPostject(outputExePath, blobPath);
 
   process.stdout.write(`Created SEA executable at ${outputExePath}\n`);
 }
 
-main();
+main().catch((error) => {
+  process.stderr.write(`${error.stack || error.message}\n`);
+  process.exit(1);
+});
