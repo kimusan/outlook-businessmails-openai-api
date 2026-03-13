@@ -34,6 +34,11 @@ Runtime on target machine does **not** require a globally installed Node.js.
 - Selection-first behavior for summarize/translate/improve workflows, with full-body fallback.
 - Large Outlook dialog result window (outside taskpane) with structured heading/bullet rendering.
 - In-taskpane AI chat area for follow-up questions on current email/result context.
+- Split API URL config:
+  - Base URI (everything before `/v1/`)
+  - Chat completions path
+  - Model list path
+  - Token refresh path (shown only for UMS token auth mode)
 - Selectable auth mode:
   - UMS token -> `/v1/token/refresh` -> access token flow
   - Direct API key as bearer token

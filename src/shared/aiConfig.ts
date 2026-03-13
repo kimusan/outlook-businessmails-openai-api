@@ -5,7 +5,10 @@ import type { SupportedLanguage } from "./promptBuilders";
 export type AuthMode = "umsToken" | "apiKey";
 
 export interface AiServiceConfig {
-  endpoint: string;
+  baseUri: string;
+  chatCompletionsPath: string;
+  modelListPath: string;
+  tokenRefreshPath: string;
   model: string;
   temperature: number;
   authMode: AuthMode;
@@ -15,7 +18,10 @@ export interface AiServiceConfig {
 }
 
 export const DEFAULT_AI_CONFIG: AiServiceConfig = {
-  endpoint: "",
+  baseUri: "",
+  chatCompletionsPath: "/v1/chat/completions",
+  modelListPath: "/v1/model_list",
+  tokenRefreshPath: "/v1/token/refresh",
   model: "gpt-4o-mini",
   temperature: 0.4,
   authMode: "umsToken",
@@ -26,6 +32,10 @@ export const DEFAULT_AI_CONFIG: AiServiceConfig = {
 
 const STORAGE_KEY = "outlookAiAssistant.aiConfig";
 
+interface LegacyAiServiceConfig {
+  endpoint?: string;
+}
+
 function getRoamingSettings(): Office.RoamingSettings | null {
   if (typeof Office === "undefined" || !Office.context || !Office.context.roamingSettings) {
     return null;
@@ -34,11 +44,58 @@ function getRoamingSettings(): Office.RoamingSettings | null {
   return Office.context.roamingSettings;
 }
 
-function normalizeConfig(input: Partial<AiServiceConfig> | null | undefined): AiServiceConfig {
+function normalizePath(value: unknown, fallback: string): string {
+  const raw = typeof value === "string" ? value.trim() : "";
+  const candidate = raw || fallback;
+  if (!candidate) {
+    return fallback;
+  }
+
+  return candidate.startsWith("/") ? candidate : `/${candidate}`;
+}
+
+function normalizeBaseUri(value: unknown): string {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  return value.trim().replace(/\/+$/, "");
+}
+
+function deriveFromLegacyEndpoint(
+  endpoint: unknown
+): Pick<AiServiceConfig, "baseUri" | "chatCompletionsPath"> | null {
+  if (typeof endpoint !== "string" || !endpoint.trim()) {
+    return null;
+  }
+
+  try {
+    const url = new window.URL(endpoint.trim());
+    const pathname = url.pathname.replace(/\/+$/, "");
+    const match = pathname.match(/^(.*)\/v1(\/.*)?$/);
+    if (!match) {
+      return null;
+    }
+
+    const basePath = match[1] || "";
+    const chatSuffix = match[2] || "/chat/completions";
+    return {
+      baseUri: `${url.origin}${basePath}`.replace(/\/+$/, ""),
+      chatCompletionsPath: `/v1${chatSuffix}`,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function normalizeConfig(
+  input: Partial<AiServiceConfig & LegacyAiServiceConfig> | null | undefined
+): AiServiceConfig {
   if (!input) {
     return { ...DEFAULT_AI_CONFIG };
   }
 
+  const legacy = deriveFromLegacyEndpoint(input.endpoint);
   const authMode: AuthMode =
     input.authMode === "apiKey"
       ? "apiKey"
@@ -49,7 +106,13 @@ function normalizeConfig(input: Partial<AiServiceConfig> | null | undefined): Ai
           : "umsToken";
 
   return {
-    endpoint: (input.endpoint || DEFAULT_AI_CONFIG.endpoint).trim(),
+    baseUri: normalizeBaseUri(input.baseUri || legacy?.baseUri || DEFAULT_AI_CONFIG.baseUri),
+    chatCompletionsPath: normalizePath(
+      input.chatCompletionsPath || legacy?.chatCompletionsPath,
+      DEFAULT_AI_CONFIG.chatCompletionsPath
+    ),
+    modelListPath: normalizePath(input.modelListPath, DEFAULT_AI_CONFIG.modelListPath),
+    tokenRefreshPath: normalizePath(input.tokenRefreshPath, DEFAULT_AI_CONFIG.tokenRefreshPath),
     model: (input.model || DEFAULT_AI_CONFIG.model).trim(),
     temperature:
       typeof input.temperature === "number" ? input.temperature : DEFAULT_AI_CONFIG.temperature,
@@ -68,7 +131,7 @@ export function loadAiServiceConfig(): AiServiceConfig {
   if (roamingSettings) {
     const value = roamingSettings.get(STORAGE_KEY);
     if (value) {
-      return normalizeConfig(value as Partial<AiServiceConfig>);
+      return normalizeConfig(value as Partial<AiServiceConfig & LegacyAiServiceConfig>);
     }
   }
 
@@ -78,7 +141,9 @@ export function loadAiServiceConfig(): AiServiceConfig {
       return { ...DEFAULT_AI_CONFIG };
     }
 
-    return normalizeConfig(JSON.parse(localValue) as Partial<AiServiceConfig>);
+    return normalizeConfig(
+      JSON.parse(localValue) as Partial<AiServiceConfig & LegacyAiServiceConfig>
+    );
   } catch {
     return { ...DEFAULT_AI_CONFIG };
   }
@@ -112,20 +177,43 @@ export async function saveAiServiceConfig(config: AiServiceConfig): Promise<void
 }
 
 export function validateAiServiceConfig(config: AiServiceConfig): string | null {
-  if (!config.endpoint.trim()) {
-    return "Endpoint URL is required.";
+  if (!config.baseUri.trim()) {
+    return "Base URI is required.";
   }
 
-  if (!config.model.trim()) {
-    return "Model is required.";
+  try {
+    const parsed = new window.URL(config.baseUri);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+      return "Base URI must use http or https.";
+    }
+  } catch {
+    return "Base URI must be a valid URL.";
   }
 
-  if (config.authMode === "umsToken" && !config.umsToken.trim()) {
-    return "UMS token is required.";
+  if (!config.chatCompletionsPath.trim()) {
+    return "Chat completions path is required.";
+  }
+
+  if (!config.modelListPath.trim()) {
+    return "Model list path is required.";
+  }
+
+  if (config.authMode === "umsToken") {
+    if (!config.tokenRefreshPath.trim()) {
+      return "Token refresh path is required for UMS token mode.";
+    }
+
+    if (!config.umsToken.trim()) {
+      return "UMS token is required.";
+    }
   }
 
   if (config.authMode === "apiKey" && !config.apiKey.trim()) {
     return "API key is required.";
+  }
+
+  if (!config.model.trim()) {
+    return "Model is required.";
   }
 
   if (!["English", "Korean", "Danish"].includes(config.preferredLanguage)) {

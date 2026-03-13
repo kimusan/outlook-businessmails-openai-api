@@ -42,6 +42,7 @@ import {
 } from "../../shared/aiConfig";
 import {
   createChatCompletion,
+  getChatCompletionEndpoint,
   getModelListEndpoint,
   getTokenRefreshEndpoint,
   isAiClientError,
@@ -227,21 +228,29 @@ export default function App(props: AppProps) {
   const dialogRef = React.useRef<Office.Dialog | null>(null);
   const isConfigReady = validateAiServiceConfig(config) === null;
 
+  const chatCompletionsEndpointPreview = React.useMemo(() => {
+    try {
+      return getChatCompletionEndpoint(config);
+    } catch {
+      return "Enter a valid base URI and chat path.";
+    }
+  }, [config]);
+
   const modelListEndpointPreview = React.useMemo(() => {
     try {
-      return getModelListEndpoint(config.endpoint || "https://example.com/v1/chat/completions");
+      return getModelListEndpoint(config);
     } catch {
-      return "Enter a valid endpoint URL to preview model list URL.";
+      return "Enter a valid base URI and model list path.";
     }
-  }, [config.endpoint]);
+  }, [config]);
 
   const tokenRefreshEndpointPreview = React.useMemo(() => {
     try {
-      return getTokenRefreshEndpoint(config.endpoint || "https://example.com/v1/chat/completions");
+      return getTokenRefreshEndpoint(config);
     } catch {
-      return "Enter a valid endpoint URL to preview token refresh URL.";
+      return "Enter a valid base URI and token refresh path.";
     }
-  }, [config.endpoint]);
+  }, [config]);
 
   React.useEffect(() => {
     setTargetLanguage(config.preferredLanguage);
@@ -430,8 +439,8 @@ export default function App(props: AppProps) {
       setModelListError("");
       setModelListInfo("");
 
-      if (!config.endpoint.trim()) {
-        setModelListError("Set endpoint first to fetch models.");
+      if (!config.baseUri.trim()) {
+        setModelListError("Set base URI first to fetch models.");
         return;
       }
 
@@ -463,8 +472,8 @@ export default function App(props: AppProps) {
       setModelListError("");
       setModelListInfo("");
 
-      if (!config.endpoint.trim()) {
-        throw new Error("Set endpoint first to check API.");
+      if (!config.baseUri.trim()) {
+        throw new Error("Set base URI first to check API.");
       }
 
       setIsCheckingApi(true);
@@ -766,12 +775,26 @@ export default function App(props: AppProps) {
           <div className="taskpane-section taskpane-config">
             <h3>AI Service Configuration</h3>
             <TextField
-              label="Chat completions endpoint"
-              value={config.endpoint}
-              placeholder="https://internal-ai.example.com/v1/chat/completions"
-              onChange={(_ev, value) => setConfig({ ...config, endpoint: value || "" })}
+              label="Base URI"
+              value={config.baseUri}
+              placeholder="https://internal-ai.example.com"
+              onChange={(_ev, value) => setConfig({ ...config, baseUri: value || "" })}
             />
-            <TextField label="Model list endpoint" value={modelListEndpointPreview} readOnly />
+            <p className="taskpane-config-state">Use everything before `/v1/` as base URI.</p>
+            <TextField
+              label="Chat completions path"
+              value={config.chatCompletionsPath}
+              placeholder="/v1/chat/completions"
+              onChange={(_ev, value) => setConfig({ ...config, chatCompletionsPath: value || "" })}
+            />
+            <TextField label="Resolved chat completions endpoint" value={chatCompletionsEndpointPreview} readOnly />
+            <TextField
+              label="Model list path"
+              value={config.modelListPath}
+              placeholder="/v1/model_list"
+              onChange={(_ev, value) => setConfig({ ...config, modelListPath: value || "" })}
+            />
+            <TextField label="Resolved model list endpoint" value={modelListEndpointPreview} readOnly />
             <Dropdown
               label="Authentication mode"
               selectedKey={config.authMode}
@@ -789,7 +812,13 @@ export default function App(props: AppProps) {
             />
             {config.authMode === "umsToken" && (
               <>
-                <TextField label="Token refresh endpoint" value={tokenRefreshEndpointPreview} readOnly />
+                <TextField
+                  label="Token refresh path"
+                  value={config.tokenRefreshPath}
+                  placeholder="/v1/token/refresh"
+                  onChange={(_ev, value) => setConfig({ ...config, tokenRefreshPath: value || "" })}
+                />
+                <TextField label="Resolved token refresh endpoint" value={tokenRefreshEndpointPreview} readOnly />
                 <TextField
                   type="password"
                   canRevealPassword

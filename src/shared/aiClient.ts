@@ -71,8 +71,39 @@ export function isAiClientError(error: unknown): error is AiClientError {
   );
 }
 
+function normalizeApiPath(path: string): string {
+  const trimmed = (path || "").trim();
+  if (!trimmed) {
+    return "/";
+  }
+
+  return trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+}
+
+function joinBaseUriAndPath(baseUri: string, endpointPath: string): string {
+  const url = new window.URL(baseUri.trim());
+  const basePath = url.pathname.replace(/\/+$/, "");
+  const normalizedEndpointPath = normalizeApiPath(endpointPath);
+  url.pathname = `${basePath}${normalizedEndpointPath}`;
+  url.search = "";
+  url.hash = "";
+  return url.toString();
+}
+
+export function getChatCompletionEndpoint(config: AiServiceConfig): string {
+  return joinBaseUriAndPath(config.baseUri, config.chatCompletionsPath);
+}
+
+export function getModelListEndpoint(config: AiServiceConfig): string {
+  return joinBaseUriAndPath(config.baseUri, config.modelListPath);
+}
+
+export function getTokenRefreshEndpoint(config: AiServiceConfig): string {
+  return joinBaseUriAndPath(config.baseUri, config.tokenRefreshPath);
+}
+
 function buildCacheKey(config: AiServiceConfig): string {
-  return `${config.endpoint.trim()}::${config.umsToken.trim()}`;
+  return `${config.baseUri.trim()}::${config.tokenRefreshPath.trim()}::${config.umsToken.trim()}`;
 }
 
 function getCachedAccessToken(config: AiServiceConfig): string | null {
@@ -126,31 +157,6 @@ function extractModelId(
   return null;
 }
 
-function deriveV1Endpoint(chatCompletionsEndpoint: string, suffix: string): string {
-  const url = new window.URL(chatCompletionsEndpoint.trim());
-  const pathname = url.pathname.replace(/\/+$/, "");
-  const match = pathname.match(/^(.*)\/v1(?:\/.*)?$/);
-
-  if (match) {
-    const prefix = match[1] || "";
-    url.pathname = `${prefix}/v1/${suffix}`;
-  } else {
-    url.pathname = `/v1/${suffix}`;
-  }
-
-  url.search = "";
-  url.hash = "";
-  return url.toString();
-}
-
-export function getModelListEndpoint(chatCompletionsEndpoint: string): string {
-  return deriveV1Endpoint(chatCompletionsEndpoint, "model_list");
-}
-
-export function getTokenRefreshEndpoint(chatCompletionsEndpoint: string): string {
-  return deriveV1Endpoint(chatCompletionsEndpoint, "token/refresh");
-}
-
 export async function refreshAccessToken(
   config: AiServiceConfig,
   forceRefresh = false
@@ -160,7 +166,7 @@ export async function refreshAccessToken(
     if (!directApiKey) {
       throw new AiClientError("API key is required when using API key authentication mode.", {
         operation: "tokenRefresh",
-        url: config.endpoint,
+        url: getChatCompletionEndpoint(config),
         method: "POST",
         requestPayloadSummary: {
           authMode: config.authMode,
@@ -177,7 +183,7 @@ export async function refreshAccessToken(
     return cachedToken;
   }
 
-  const refreshEndpoint = getTokenRefreshEndpoint(config.endpoint);
+  const refreshEndpoint = getTokenRefreshEndpoint(config);
   const umsToken = config.umsToken.trim();
   if (!umsToken) {
     throw new AiClientError("UMS token is required to refresh access token.", {
@@ -294,7 +300,7 @@ async function fetchWithAuth(config: AiServiceConfig, request: AuthorizedRequest
 }
 
 export async function listAvailableModels(config: AiServiceConfig): Promise<string[]> {
-  const modelListEndpoint = getModelListEndpoint(config.endpoint);
+  const modelListEndpoint = getModelListEndpoint(config);
   const response = await fetchWithAuth(config, {
     operation: "modelList",
     url: modelListEndpoint,
@@ -359,6 +365,7 @@ export async function createChatCompletion(
   config: AiServiceConfig,
   messages: ChatMessage[]
 ): Promise<string> {
+  const chatCompletionEndpoint = getChatCompletionEndpoint(config);
   const requestPayload = {
     model: config.model,
     temperature: config.temperature,
@@ -367,7 +374,7 @@ export async function createChatCompletion(
 
   const response = await fetchWithAuth(config, {
     operation: "chatCompletion",
-    url: config.endpoint,
+    url: chatCompletionEndpoint,
     method: "POST",
     body: JSON.stringify(requestPayload),
     requestPayloadSummary: {
@@ -388,7 +395,7 @@ export async function createChatCompletion(
   if (!payload) {
     throw new AiClientError("Chat completion response was not valid JSON.", {
       operation: "chatCompletion",
-      url: config.endpoint,
+      url: chatCompletionEndpoint,
       method: "POST",
       status: response.status,
       statusText: response.statusText,
@@ -405,7 +412,7 @@ export async function createChatCompletion(
     const errorMessage = payload.error?.message || `Request failed with status ${response.status}`;
     throw new AiClientError(errorMessage, {
       operation: "chatCompletion",
-      url: config.endpoint,
+      url: chatCompletionEndpoint,
       method: "POST",
       status: response.status,
       statusText: response.statusText,
@@ -422,7 +429,7 @@ export async function createChatCompletion(
   if (!content) {
     throw new AiClientError("AI service returned no message content.", {
       operation: "chatCompletion",
-      url: config.endpoint,
+      url: chatCompletionEndpoint,
       method: "POST",
       status: response.status,
       statusText: response.statusText,
