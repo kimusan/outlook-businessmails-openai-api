@@ -38,9 +38,13 @@ export interface AiClientErrorDetails {
   operation: "chatCompletion" | "modelList" | "tokenRefresh";
   url: string;
   method: "GET" | "POST";
+  requestHeaders?: Record<string, string>;
+  requestBody?: string;
   status?: number;
   statusText?: string;
+  responseHeaders?: Record<string, string>;
   responseBody?: string;
+  requestAttempts?: RequestAttemptDebug[];
   requestPayloadSummary?: Record<string, unknown>;
   underlyingError?: string;
 }
@@ -61,6 +65,23 @@ interface AuthorizedRequest {
   method: "GET" | "POST";
   body?: string;
   requestPayloadSummary?: Record<string, unknown>;
+}
+
+export interface RequestAttemptDebug {
+  url: string;
+  method: "GET" | "POST";
+  requestHeaders: Record<string, string>;
+  requestBody?: string;
+  status?: number;
+  statusText?: string;
+  responseHeaders?: Record<string, string>;
+  networkError?: string;
+}
+
+interface FetchWithAuthResult {
+  response: any;
+  requestAttempt: RequestAttemptDebug;
+  requestAttempts: RequestAttemptDebug[];
 }
 
 const accessTokenCache = new Map<string, string>();
@@ -127,6 +148,19 @@ function truncateForLog(input: string, maxLength: number): string {
   return `${input.slice(0, maxLength)}... [truncated]`;
 }
 
+function serializeHeaders(headers: any): Record<string, string> {
+  const result: Record<string, string> = {};
+  if (!headers || typeof headers.forEach !== "function") {
+    return result;
+  }
+
+  headers.forEach((value: string, key: string) => {
+    result[key] = value;
+  });
+
+  return result;
+}
+
 async function parseResponseBody(response: any): Promise<string> {
   try {
     return await response.text();
@@ -185,11 +219,18 @@ export async function refreshAccessToken(
 
   const refreshEndpoint = getTokenRefreshEndpoint(config);
   const umsToken = config.umsToken.trim();
+  const requestHeaders = {
+    "Content-Type": "application/x-www-form-urlencoded",
+    Accept: "application/json",
+  };
+  const requestBody = `ums_token=${encodeURIComponent(umsToken)}`;
   if (!umsToken) {
     throw new AiClientError("UMS token is required to refresh access token.", {
       operation: "tokenRefresh",
       url: refreshEndpoint,
       method: "POST",
+      requestHeaders,
+      requestBody,
       requestPayloadSummary: {
         hasUmsToken: false,
         forcedRefresh: forceRefresh,
@@ -201,17 +242,16 @@ export async function refreshAccessToken(
   try {
     response = await window.fetch(refreshEndpoint, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        Accept: "application/json",
-      },
-      body: `ums_token=${encodeURIComponent(umsToken)}`,
+      headers: requestHeaders,
+      body: requestBody,
     });
   } catch (error) {
     throw new AiClientError("Token refresh request failed before receiving a response.", {
       operation: "tokenRefresh",
       url: refreshEndpoint,
       method: "POST",
+      requestHeaders,
+      requestBody,
       requestPayloadSummary: {
         hasUmsToken: true,
         forcedRefresh: forceRefresh,
@@ -235,8 +275,11 @@ export async function refreshAccessToken(
         operation: "tokenRefresh",
         url: refreshEndpoint,
         method: "POST",
+        requestHeaders,
+        requestBody,
         status: response.status,
         statusText: response.statusText,
+        responseHeaders: serializeHeaders(response.headers),
         responseBody: truncateForLog(responseBody, 4000),
         requestPayloadSummary: {
           hasUmsToken: true,
@@ -252,8 +295,11 @@ export async function refreshAccessToken(
       operation: "tokenRefresh",
       url: refreshEndpoint,
       method: "POST",
+      requestHeaders,
+      requestBody,
       status: response.status,
       statusText: response.statusText,
+      responseHeaders: serializeHeaders(response.headers),
       responseBody: truncateForLog(responseBody, 4000),
       requestPayloadSummary: {
         hasUmsToken: true,
@@ -266,22 +312,51 @@ export async function refreshAccessToken(
   return accessToken;
 }
 
-async function fetchWithAuth(config: AiServiceConfig, request: AuthorizedRequest): Promise<any> {
-  const execute = async (accessToken: string): Promise<any> => {
+async function fetchWithAuth(
+  config: AiServiceConfig,
+  request: AuthorizedRequest
+): Promise<FetchWithAuthResult> {
+  const requestAttempts: RequestAttemptDebug[] = [];
+
+  const execute = async (accessToken: string): Promise<FetchWithAuthResult> => {
+    const requestHeaders: Record<string, string> = {
+      ...(request.method === "POST" ? { "Content-Type": "application/json" } : {}),
+      Authorization: `Bearer ${accessToken}`,
+    };
+
+    const attempt: RequestAttemptDebug = {
+      url: request.url,
+      method: request.method,
+      requestHeaders,
+      requestBody: request.body,
+    };
+    requestAttempts.push(attempt);
+
     try {
-      return await window.fetch(request.url, {
+      const response = await window.fetch(request.url, {
         method: request.method,
-        headers: {
-          ...(request.method === "POST" ? { "Content-Type": "application/json" } : {}),
-          Authorization: `Bearer ${accessToken}`,
-        },
+        headers: requestHeaders,
         body: request.body,
       });
+
+      attempt.status = response.status;
+      attempt.statusText = response.statusText;
+      attempt.responseHeaders = serializeHeaders(response.headers);
+
+      return {
+        response,
+        requestAttempt: attempt,
+        requestAttempts,
+      };
     } catch (error) {
+      attempt.networkError = (error as Error).message;
       throw new AiClientError(`${request.operation} request failed before receiving a response.`, {
         operation: request.operation,
         url: request.url,
         method: request.method,
+        requestHeaders,
+        requestBody: request.body,
+        requestAttempts,
         requestPayloadSummary: request.requestPayloadSummary,
         underlyingError: (error as Error).message,
       });
@@ -289,19 +364,21 @@ async function fetchWithAuth(config: AiServiceConfig, request: AuthorizedRequest
   };
 
   let accessToken = await refreshAccessToken(config);
-  let response = await execute(accessToken);
+  let execution = await execute(accessToken);
+  let response = execution.response;
 
   if ((response.status === 401 || response.status === 403) && config.authMode === "umsToken") {
     accessToken = await refreshAccessToken(config, true);
-    response = await execute(accessToken);
+    execution = await execute(accessToken);
+    response = execution.response;
   }
 
-  return response;
+  return execution;
 }
 
 export async function listAvailableModels(config: AiServiceConfig): Promise<string[]> {
   const modelListEndpoint = getModelListEndpoint(config);
-  const response = await fetchWithAuth(config, {
+  const { response, requestAttempt, requestAttempts } = await fetchWithAuth(config, {
     operation: "modelList",
     url: modelListEndpoint,
     method: "GET",
@@ -322,9 +399,13 @@ export async function listAvailableModels(config: AiServiceConfig): Promise<stri
         operation: "modelList",
         url: modelListEndpoint,
         method: "GET",
+        requestHeaders: requestAttempt.requestHeaders,
+        requestBody: requestAttempt.requestBody,
         status: response.status,
         statusText: response.statusText,
+        responseHeaders: requestAttempt.responseHeaders,
         responseBody: truncateForLog(responseBody, 4000),
+        requestAttempts,
       }
     );
   }
@@ -334,9 +415,13 @@ export async function listAvailableModels(config: AiServiceConfig): Promise<stri
       operation: "modelList",
       url: modelListEndpoint,
       method: "GET",
+      requestHeaders: requestAttempt.requestHeaders,
+      requestBody: requestAttempt.requestBody,
       status: response.status,
       statusText: response.statusText,
+      responseHeaders: requestAttempt.responseHeaders,
       responseBody: truncateForLog(responseBody, 4000),
+      requestAttempts,
     });
   }
 
@@ -352,9 +437,13 @@ export async function listAvailableModels(config: AiServiceConfig): Promise<stri
       operation: "modelList",
       url: modelListEndpoint,
       method: "GET",
+      requestHeaders: requestAttempt.requestHeaders,
+      requestBody: requestAttempt.requestBody,
       status: response.status,
       statusText: response.statusText,
+      responseHeaders: requestAttempt.responseHeaders,
       responseBody: truncateForLog(responseBody, 4000),
+      requestAttempts,
     });
   }
 
@@ -372,7 +461,7 @@ export async function createChatCompletion(
     messages,
   };
 
-  const response = await fetchWithAuth(config, {
+  const { response, requestAttempt, requestAttempts } = await fetchWithAuth(config, {
     operation: "chatCompletion",
     url: chatCompletionEndpoint,
     method: "POST",
@@ -397,9 +486,13 @@ export async function createChatCompletion(
       operation: "chatCompletion",
       url: chatCompletionEndpoint,
       method: "POST",
+      requestHeaders: requestAttempt.requestHeaders,
+      requestBody: requestAttempt.requestBody,
       status: response.status,
       statusText: response.statusText,
+      responseHeaders: requestAttempt.responseHeaders,
       responseBody: truncateForLog(responseBody, 4000),
+      requestAttempts,
       requestPayloadSummary: {
         model: requestPayload.model,
         temperature: requestPayload.temperature,
@@ -414,9 +507,13 @@ export async function createChatCompletion(
       operation: "chatCompletion",
       url: chatCompletionEndpoint,
       method: "POST",
+      requestHeaders: requestAttempt.requestHeaders,
+      requestBody: requestAttempt.requestBody,
       status: response.status,
       statusText: response.statusText,
+      responseHeaders: requestAttempt.responseHeaders,
       responseBody: truncateForLog(responseBody, 4000),
+      requestAttempts,
       requestPayloadSummary: {
         model: requestPayload.model,
         temperature: requestPayload.temperature,
@@ -431,9 +528,13 @@ export async function createChatCompletion(
       operation: "chatCompletion",
       url: chatCompletionEndpoint,
       method: "POST",
+      requestHeaders: requestAttempt.requestHeaders,
+      requestBody: requestAttempt.requestBody,
       status: response.status,
       statusText: response.statusText,
+      responseHeaders: requestAttempt.responseHeaders,
       responseBody: truncateForLog(responseBody, 4000),
+      requestAttempts,
       requestPayloadSummary: {
         model: requestPayload.model,
         temperature: requestPayload.temperature,
