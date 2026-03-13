@@ -1,6 +1,11 @@
 /* global Office, window */
 
-import type { SupportedLanguage } from "./promptBuilders";
+import {
+  DEFAULT_PROMPT_TEMPLATES,
+  mergePromptTemplates,
+  type PromptTemplates,
+  type SupportedLanguage,
+} from "./promptBuilders";
 
 export type AuthMode = "umsToken" | "apiKey";
 
@@ -9,6 +14,7 @@ export interface AiServiceConfig {
   chatCompletionsPath: string;
   modelListPath: string;
   tokenRefreshPath: string;
+  promptTemplates: PromptTemplates;
   model: string;
   temperature: number;
   authMode: AuthMode;
@@ -22,6 +28,7 @@ export const DEFAULT_AI_CONFIG: AiServiceConfig = {
   chatCompletionsPath: "/v1/chat/completions",
   modelListPath: "/v1/model_list",
   tokenRefreshPath: "/v1/token/refresh",
+  promptTemplates: { ...DEFAULT_PROMPT_TEMPLATES },
   model: "gpt-4o-mini",
   temperature: 0.4,
   authMode: "umsToken",
@@ -113,6 +120,7 @@ function normalizeConfig(
     ),
     modelListPath: normalizePath(input.modelListPath, DEFAULT_AI_CONFIG.modelListPath),
     tokenRefreshPath: normalizePath(input.tokenRefreshPath, DEFAULT_AI_CONFIG.tokenRefreshPath),
+    promptTemplates: mergePromptTemplates(input.promptTemplates),
     model: (input.model || DEFAULT_AI_CONFIG.model).trim(),
     temperature:
       typeof input.temperature === "number" ? input.temperature : DEFAULT_AI_CONFIG.temperature,

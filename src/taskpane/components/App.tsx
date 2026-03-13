@@ -3,6 +3,9 @@
 import * as React from "react";
 import {
   DefaultButton,
+  Dialog,
+  DialogFooter,
+  DialogType,
   Dropdown,
   IDropdownOption,
   MessageBar,
@@ -27,8 +30,11 @@ import {
   buildReplyDraftMessages,
   buildSummaryMessages,
   buildTranslationMessages,
+  DEFAULT_PROMPT_TEMPLATES,
   FormalityOption,
   LengthOption,
+  PROMPT_TEMPLATE_DEFINITIONS,
+  PromptTemplateKey,
   SupportedLanguage,
   ToneOption,
 } from "../../shared/promptBuilders";
@@ -219,6 +225,10 @@ export default function App(props: AppProps) {
   const [errorText, setErrorText] = React.useState<string>("");
   const [debugLog, setDebugLog] = React.useState<string[]>([]);
   const [isDebugVisible, setIsDebugVisible] = React.useState<boolean>(false);
+  const [isPromptEditorVisible, setIsPromptEditorVisible] = React.useState<boolean>(false);
+  const [selectedPromptTemplateKey, setSelectedPromptTemplateKey] = React.useState<PromptTemplateKey>(
+    "replyDraftSystem"
+  );
   const [isLoading, setIsLoading] = React.useState<boolean>(false);
   const [isSavingConfig, setIsSavingConfig] = React.useState<boolean>(false);
   const [isCheckingApi, setIsCheckingApi] = React.useState<boolean>(false);
@@ -251,6 +261,13 @@ export default function App(props: AppProps) {
       return "Enter a valid base URI and token refresh path.";
     }
   }, [config]);
+
+  const selectedPromptTemplateDefinition = React.useMemo(
+    () =>
+      PROMPT_TEMPLATE_DEFINITIONS.find((definition) => definition.key === selectedPromptTemplateKey) ||
+      PROMPT_TEMPLATE_DEFINITIONS[0],
+    [selectedPromptTemplateKey]
+  );
 
   React.useEffect(() => {
     setTargetLanguage(config.preferredLanguage);
@@ -524,6 +541,28 @@ export default function App(props: AppProps) {
     }
   };
 
+  const onUpdatePromptTemplate = (key: PromptTemplateKey, value: string) => {
+    setConfig((previous) => ({
+      ...previous,
+      promptTemplates: {
+        ...previous.promptTemplates,
+        [key]: value,
+      },
+    }));
+  };
+
+  const onResetSelectedPromptTemplate = () => {
+    const defaultValue = DEFAULT_PROMPT_TEMPLATES[selectedPromptTemplateKey];
+    onUpdatePromptTemplate(selectedPromptTemplateKey, defaultValue);
+  };
+
+  const onResetAllPromptTemplates = () => {
+    setConfig((previous) => ({
+      ...previous,
+      promptTemplates: { ...DEFAULT_PROMPT_TEMPLATES },
+    }));
+  };
+
   const onRunWorkflow = async () => {
     setErrorText("");
     setStatusText("");
@@ -545,7 +584,14 @@ export default function App(props: AppProps) {
         }
 
         const output = await runAi(
-          buildReplyDraftMessages(threadText, direction.trim(), tone, formality, length)
+          buildReplyDraftMessages(
+            threadText,
+            direction.trim(),
+            tone,
+            formality,
+            length,
+            config.promptTemplates
+          )
         );
         await presentResult(createDialogPayload("Generated reply draft", getWorkflowLabel(workflow), "Original", output));
         setStatus("Reply draft generated.");
@@ -561,7 +607,9 @@ export default function App(props: AppProps) {
           throw new Error("No draft text found to improve.");
         }
 
-        const output = await runAi(buildImproveDraftMessages(sourceText, tone, formality, length));
+        const output = await runAi(
+          buildImproveDraftMessages(sourceText, tone, formality, length, config.promptTemplates)
+        );
         await presentResult(
           createDialogPayload(
             source.usedSelection ? "Improved selected text" : "Improved draft",
@@ -588,7 +636,16 @@ export default function App(props: AppProps) {
           throw new Error("Could not detect referenced thread text for reply optimization.");
         }
 
-        const output = await runAi(buildImproveReplyMessages(draftText, threadText, tone, formality, length));
+        const output = await runAi(
+          buildImproveReplyMessages(
+            draftText,
+            threadText,
+            tone,
+            formality,
+            length,
+            config.promptTemplates
+          )
+        );
         await presentResult(
           createDialogPayload("Improved reply draft", getWorkflowLabel(workflow), "Original", output)
         );
@@ -605,7 +662,9 @@ export default function App(props: AppProps) {
           throw new Error("No email content found to summarize.");
         }
 
-        const output = await runAi(buildSummaryMessages(source.text, config.preferredLanguage));
+        const output = await runAi(
+          buildSummaryMessages(source.text, config.preferredLanguage, config.promptTemplates)
+        );
         await presentResult(
           createDialogPayload(
             source.usedSelection ? "Summary of selected text" : "Summary of email",
@@ -627,7 +686,9 @@ export default function App(props: AppProps) {
           throw new Error("No email content found to translate.");
         }
 
-        const output = await runAi(buildTranslationMessages(source.text, targetLanguage));
+        const output = await runAi(
+          buildTranslationMessages(source.text, targetLanguage, config.promptTemplates)
+        );
         await presentResult(
           createDialogPayload(
             source.usedSelection ? "Translation of selected text" : "Translation of email",
@@ -734,7 +795,13 @@ export default function App(props: AppProps) {
       setIsChatLoading(true);
       const source = await resolveWorkflowSourceText(true);
       const output = await runAi(
-        buildChatMessages(source.text, resultText, chatQuestion.trim(), config.preferredLanguage)
+        buildChatMessages(
+          source.text,
+          resultText,
+          chatQuestion.trim(),
+          config.preferredLanguage,
+          config.promptTemplates
+        )
       );
 
       setChatResponse(output);
@@ -867,6 +934,9 @@ export default function App(props: AppProps) {
               </DefaultButton>
               <DefaultButton onClick={onRefreshModels} disabled={isLoadingModels}>
                 {isLoadingModels ? "Loading models..." : "Refresh model list"}
+              </DefaultButton>
+              <DefaultButton onClick={() => setIsPromptEditorVisible(true)}>
+                Edit prompts
               </DefaultButton>
             </div>
             {config.authMode === "umsToken" && (
@@ -1102,6 +1172,53 @@ export default function App(props: AppProps) {
           )}
         </div>
       </main>
+
+      <Dialog
+        hidden={!isPromptEditorVisible}
+        onDismiss={() => setIsPromptEditorVisible(false)}
+        dialogContentProps={{
+          type: DialogType.largeHeader,
+          title: "Prompt templates",
+          subText:
+            "Edit the prompts used by each workflow. Use placeholders listed below. Changes are saved when you save configuration.",
+        }}
+        minWidth={820}
+        modalProps={{ isBlocking: false }}
+      >
+        <Dropdown
+          label="Template"
+          selectedKey={selectedPromptTemplateKey}
+          options={PROMPT_TEMPLATE_DEFINITIONS.map((definition) => ({
+            key: definition.key,
+            text: definition.label,
+          }))}
+          onChange={(_ev, option) => {
+            if (!option) {
+              return;
+            }
+
+            setSelectedPromptTemplateKey(option.key as PromptTemplateKey);
+          }}
+        />
+        <p className="taskpane-config-state">{selectedPromptTemplateDefinition.description}</p>
+        <p className="taskpane-config-state">
+          Placeholders:{" "}
+          {selectedPromptTemplateDefinition.placeholders.length > 0
+            ? selectedPromptTemplateDefinition.placeholders.map((placeholder) => `{{${placeholder}}}`).join(", ")
+            : "(none)"}
+        </p>
+        <TextField
+          multiline
+          rows={16}
+          value={config.promptTemplates[selectedPromptTemplateKey] || ""}
+          onChange={(_ev, value) => onUpdatePromptTemplate(selectedPromptTemplateKey, value || "")}
+        />
+        <DialogFooter>
+          <DefaultButton onClick={onResetSelectedPromptTemplate}>Reset selected</DefaultButton>
+          <DefaultButton onClick={onResetAllPromptTemplates}>Reset all</DefaultButton>
+          <PrimaryButton onClick={() => setIsPromptEditorVisible(false)} text="Done" />
+        </DialogFooter>
+      </Dialog>
     </div>
   );
 }

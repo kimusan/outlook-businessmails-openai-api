@@ -39,6 +39,7 @@ Runtime on target machine does **not** require a globally installed Node.js.
   - Chat completions path
   - Model list path
   - Token refresh path (shown only for UMS token auth mode)
+- Prompt template editor in Configuration (`Edit prompts`) so users can customize system/user prompts per workflow.
 - Selectable auth mode:
   - UMS token -> `/v1/token/refresh` -> access token flow
   - Direct API key as bearer token
