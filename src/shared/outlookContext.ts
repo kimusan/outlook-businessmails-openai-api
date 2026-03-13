@@ -36,6 +36,25 @@ function getMailboxItem(): Office.Item | null {
   return Office.context.mailbox.item;
 }
 
+function normalizeOfficeTextValue(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (value && typeof value === "object" && "data" in value) {
+    const data = (value as { data?: unknown }).data;
+    if (typeof data === "string") {
+      return data;
+    }
+  }
+
+  if (value === null || typeof value === "undefined") {
+    return "";
+  }
+
+  return String(value);
+}
+
 export async function getCurrentBodyText(): Promise<string> {
   const item = getMailboxItem() as Office.MessageRead | Office.MessageCompose;
   if (!item || !item.body) {
@@ -46,7 +65,7 @@ export async function getCurrentBodyText(): Promise<string> {
     item.body.getAsync(Office.CoercionType.Text, done);
   });
 
-  return value || "";
+  return normalizeOfficeTextValue(value);
 }
 
 export async function getSelectedTextOrEmpty(): Promise<string> {
@@ -56,11 +75,11 @@ export async function getSelectedTextOrEmpty(): Promise<string> {
   }
 
   try {
-    const value = await fromAsyncResult<string>((done) => {
+    const value = await fromAsyncResult<unknown>((done) => {
       item.getSelectedDataAsync(Office.CoercionType.Text, done);
     });
 
-    return value || "";
+    return normalizeOfficeTextValue(value);
   } catch {
     return "";
   }
