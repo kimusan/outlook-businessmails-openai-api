@@ -76,7 +76,11 @@ function isSafeHref(href: string): boolean {
 }
 
 export function containsHtmlMarkup(text: string): boolean {
-  return /<\/?[a-z][\s\S]*>/i.test(text);
+  // Detect only likely-real HTML tags. This avoids false positives on placeholders
+  // like "<PRIVATE_PERSON>" which should be treated as plain text.
+  return /<\s*\/?\s*(a|b|blockquote|br|code|div|em|h[1-6]|hr|i|li|ol|p|pre|span|strong|table|tbody|td|th|thead|tr|u|ul)\b/i.test(
+    text
+  );
 }
 
 export function sanitizeHtmlFragment(input: string): string {

@@ -371,15 +371,18 @@ export default function App(props: AppProps) {
     return dialogUrl.toString();
   };
 
-  const postResultToDialog = (payload: ResultDialogPayload) => {
+  const postResultToDialog = (payload: ResultDialogPayload): boolean => {
     if (!dialogRef.current) {
-      return;
+      return false;
     }
 
     try {
       dialogRef.current.messageChild(JSON.stringify(payload));
+      return true;
     } catch (error) {
       logError("Dialog message send failed", error);
+      dialogRef.current = null;
+      return false;
     }
   };
 
@@ -388,8 +391,7 @@ export default function App(props: AppProps) {
       throw new Error("Outlook dialog API is unavailable in this client.");
     }
 
-    if (dialogRef.current) {
-      postResultToDialog(payload);
+    if (dialogRef.current && postResultToDialog(payload)) {
       return;
     }
 
@@ -431,6 +433,10 @@ export default function App(props: AppProps) {
             }
 
             if (message.type === "close") {
+              if (dialogRef.current === dialog) {
+                dialogRef.current = null;
+              }
+
               try {
                 dialog.close();
               } catch {
