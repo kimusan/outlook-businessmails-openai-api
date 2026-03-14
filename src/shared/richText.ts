@@ -1,41 +1,7 @@
+/* eslint-disable no-undef */
 /* global window */
 
-const ALLOWED_TAGS = new Set([
-  "a",
-  "b",
-  "blockquote",
-  "br",
-  "code",
-  "div",
-  "em",
-  "h1",
-  "h2",
-  "h3",
-  "h4",
-  "h5",
-  "h6",
-  "hr",
-  "i",
-  "li",
-  "ol",
-  "p",
-  "pre",
-  "span",
-  "strong",
-  "table",
-  "tbody",
-  "td",
-  "th",
-  "thead",
-  "tr",
-  "u",
-  "ul",
-]);
-
-const GLOBAL_ALLOWED_ATTRIBUTES = new Set(["colspan", "rowspan"]);
-const TAG_ALLOWED_ATTRIBUTES: Record<string, Set<string>> = {
-  a: new Set(["href", "title", "target", "rel"]),
-};
+const DANGEROUS_TAGS = new Set(["script", "iframe", "object", "embed", "template"]);
 
 function escapeHtml(input: string): string {
   return input
@@ -59,8 +25,8 @@ function applyInlineFormatting(input: string): string {
     );
 }
 
-function isSafeHref(href: string): boolean {
-  const normalized = href.trim().toLowerCase();
+function isSafeUri(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
   if (!normalized) {
     return false;
   }
@@ -70,17 +36,24 @@ function isSafeHref(href: string): boolean {
     normalized.startsWith("https://") ||
     normalized.startsWith("mailto:") ||
     normalized.startsWith("tel:") ||
+    normalized.startsWith("cid:") ||
+    normalized.startsWith("data:") ||
     normalized.startsWith("#") ||
     normalized.startsWith("/")
   );
 }
 
 export function containsHtmlMarkup(text: string): boolean {
-  // Detect only likely-real HTML tags. This avoids false positives on placeholders
-  // like "<PRIVATE_PERSON>" which should be treated as plain text.
-  return /<\s*\/?\s*(a|b|blockquote|br|code|div|em|h[1-6]|hr|i|li|ol|p|pre|span|strong|table|tbody|td|th|thead|tr|u|ul)\b/i.test(
-    text
-  );
+  if (!text || !text.includes("<") || !text.includes(">")) {
+    return false;
+  }
+
+  const pairedTag = /<([a-z][\w:-]*)(?:\s[^>]*)?>[\s\S]*<\/\1>/i;
+  if (pairedTag.test(text)) {
+    return true;
+  }
+
+  return /<(br|hr|img|meta|link|input)\b/i.test(text);
 }
 
 export function sanitizeHtmlFragment(input: string): string {
@@ -90,84 +63,72 @@ export function sanitizeHtmlFragment(input: string): string {
 
   const parser = new window.DOMParser();
   const parsed = parser.parseFromString(`<div>${input}</div>`, "text/html");
-  const container = parsed.body.firstElementChild as any;
+  const container = parsed.body.firstElementChild as HTMLElement | null;
   if (!container) {
     return escapeHtml(input);
   }
 
-  const sanitizeNode = (node: any) => {
-    const nodeType = Number(node?.nodeType || 0);
-    // 8 = comment node
-    if (nodeType === 8) {
-      node.remove();
+  const sanitizeNode = (node: Node) => {
+    if (node.nodeType === Node.COMMENT_NODE) {
+      node.parentNode?.removeChild(node);
       return;
     }
 
-    // 1 = element node
-    if (nodeType !== 1) {
+    if (node.nodeType !== Node.ELEMENT_NODE) {
       return;
     }
 
-    const tagName = String(node.tagName || "").toLowerCase();
-    if (!ALLOWED_TAGS.has(tagName)) {
-      const parent = node.parentNode;
-      if (!parent) {
-        node.remove();
-        return;
-      }
+    const element = node as HTMLElement;
+    const tagName = element.tagName.toLowerCase();
 
-      while (node.firstChild) {
-        parent.insertBefore(node.firstChild, node);
-      }
-      parent.removeChild(node);
+    if (DANGEROUS_TAGS.has(tagName)) {
+      element.remove();
       return;
     }
 
-    const allowedAttributes = TAG_ALLOWED_ATTRIBUTES[tagName] || new Set<string>();
-    const attributes = Array.from(node.attributes || []) as Array<{ name: string; value: string }>;
+    const attributes = Array.from(element.attributes) as Attr[];
     for (const attribute of attributes) {
-      const attributeName = String(attribute.name || "").toLowerCase();
-      if (!GLOBAL_ALLOWED_ATTRIBUTES.has(attributeName) && !allowedAttributes.has(attributeName)) {
-        node.removeAttribute(attribute.name);
+      const name = attribute.name.toLowerCase();
+      const value = attribute.value || "";
+
+      if (name.startsWith("on") || name === "srcdoc") {
+        element.removeAttribute(attribute.name);
         continue;
       }
 
-      if (tagName === "a" && attributeName === "href") {
-        if (!isSafeHref(String(attribute.value || ""))) {
-          node.removeAttribute("href");
-        }
+      if (
+        (name === "href" || name === "src" || name === "xlink:href" || name === "formaction") &&
+        !isSafeUri(value)
+      ) {
+        element.removeAttribute(attribute.name);
+        continue;
       }
     }
 
     if (tagName === "a") {
-      const target = String(node.getAttribute("target") || "").toLowerCase();
+      const href = element.getAttribute("href");
+      if (href && !isSafeUri(href)) {
+        element.removeAttribute("href");
+      }
+
+      const target = (element.getAttribute("target") || "").toLowerCase();
       if (target === "_blank") {
-        node.setAttribute("rel", "noopener noreferrer");
+        element.setAttribute("rel", "noopener noreferrer");
       }
     }
 
-    const children = Array.from(node.childNodes || []);
+    const children = Array.from(element.childNodes);
     for (const child of children) {
       sanitizeNode(child);
     }
   };
 
-  const nodes = Array.from(container.childNodes || []);
+  const nodes = Array.from(container.childNodes);
   for (const node of nodes) {
     sanitizeNode(node);
   }
 
   return container.innerHTML;
-}
-
-export function htmlToPlainText(html: string): string {
-  if (typeof window === "undefined" || typeof window.DOMParser === "undefined") {
-    return html;
-  }
-
-  const parser = new window.DOMParser();
-  const parsed = parser.parseFromString(html, "text/html");
-  return (parsed.body.textContent || "").trim();
 }
 
 function formatStructuredText(text: string): string {
@@ -227,6 +188,16 @@ function formatStructuredText(text: string): string {
   }
 
   return htmlParts.join("");
+}
+
+export function htmlToPlainText(html: string): string {
+  if (typeof window === "undefined" || typeof window.DOMParser === "undefined") {
+    return html;
+  }
+
+  const parser = new window.DOMParser();
+  const parsed = parser.parseFromString(html, "text/html");
+  return (parsed.body.textContent || "").trim();
 }
 
 export function formatStructuredTextAsHtml(text: string): string {

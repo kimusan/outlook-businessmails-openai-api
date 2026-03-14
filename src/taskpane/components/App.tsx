@@ -17,7 +17,9 @@ import {
 import Progress from "./Progress";
 import {
   getComposeTypeOrUnknown,
+  getCurrentBodyHtml,
   getCurrentBodyText,
+  getSelectedHtmlOrEmpty,
   getSelectedTextOrEmpty,
   insertHtmlAtCursor,
   insertTextAtCursor,
@@ -689,7 +691,31 @@ export default function App(props: AppProps) {
       }
 
       if (workflow === "translate") {
-        const source = await resolveWorkflowSourceText(true);
+        let source = await resolveWorkflowSourceText(true);
+        let usedHtml = false;
+
+        if (preferredScope === "selection") {
+          const selectedHtml = await getSelectedHtmlOrEmpty();
+          if (selectedHtml.trim()) {
+            source = {
+              text: selectedHtml,
+              usedSelection: true,
+            };
+            usedHtml = true;
+          }
+        }
+
+        if (!source.usedSelection && !usedHtml) {
+          const bodyHtml = await getCurrentBodyHtml();
+          if (bodyHtml.trim()) {
+            source = {
+              text: bodyHtml,
+              usedSelection: false,
+            };
+            usedHtml = true;
+          }
+        }
+
         if (!source.text.trim()) {
           throw new Error("No email content found to translate.");
         }
@@ -707,8 +733,8 @@ export default function App(props: AppProps) {
         );
         setStatus(
           source.usedSelection
-            ? `Selection translated to ${targetLanguage}.`
-            : `Translation to ${targetLanguage} completed.`
+            ? `Selection translated to ${targetLanguage}${usedHtml ? " (HTML preserved)." : "."}`
+            : `Translation to ${targetLanguage} completed${usedHtml ? " (HTML preserved)." : "."}`
         );
       }
     } catch (error) {
