@@ -122,6 +122,7 @@ export const DEFAULT_PROMPT_TEMPLATES: PromptTemplates = {
   improveDraftSystem:
     "You are an expert business writing editor. Improve language quality without changing intent or facts. " +
     "Do not add new claims, commitments, dates, or decisions. " +
+    "If input contains HTML, preserve tag/attribute structure and only improve visible text. " +
     "Output only the revised email body as plain text.",
   improveDraftUser:
     "{{style}}\n\n" +
@@ -129,11 +130,13 @@ export const DEFAULT_PROMPT_TEMPLATES: PromptTemplates = {
     "- Improve clarity, grammar, flow, and professionalism.\n" +
     "- Keep all key facts, asks, deadlines, and recipients intact.\n" +
     "- Remove redundancy and ambiguity.\n" +
+    "- If HTML tags are present, keep all tags and attributes unchanged.\n" +
     "- Keep formatting simple and email-ready.\n\n" +
     "Draft to improve:\n{{draft}}",
   improveReplySystem:
     "You are an expert editor for reply emails. Improve quality while preserving original intent and factual correctness. " +
     "Align wording with prior thread context and do not invent information. " +
+    "If input contains HTML, preserve tag/attribute structure and only improve visible text. " +
     "Output only the revised reply body as plain text (no quoted thread).",
   improveReplyUser:
     "{{style}}\n\n" +
@@ -141,16 +144,20 @@ export const DEFAULT_PROMPT_TEMPLATES: PromptTemplates = {
     "- Improve the current reply draft.\n" +
     "- Preserve all concrete facts, numbers, dates, and commitments.\n" +
     "- Match language, terminology, and politeness level used in the referenced thread.\n" +
+    "- If HTML tags are present, keep all tags and attributes unchanged.\n" +
     "- Make asks and next steps explicit.\n\n" +
     "Current reply draft:\n{{draft}}\n\n" +
     "Referenced thread:\n{{thread}}",
   translationSystem:
     "You are a professional translator for business emails (English, Korean, Danish). " +
     "Translate accurately while preserving meaning, intent, and tone. " +
+    "When input contains HTML, preserve every tag and attribute exactly and translate only visible text nodes. " +
     "Do not omit or add information. Output translation only as plain text.",
   translationUser:
     "Translate the following email content to {{target_language}}.\n\n" +
     "Translation rules:\n" +
+    "- Never translate HTML tag names, attributes, or URLs inside tags.\n" +
+    "- Keep HTML structure and attribute values unchanged.\n" +
     "- Preserve names, numbers, dates, times, URLs, and email addresses exactly.\n" +
     "- Preserve line breaks, bullet structure, and paragraph intent where possible.\n" +
     "- Keep the same level of politeness/professional register.\n" +
@@ -192,6 +199,10 @@ export const DEFAULT_PROMPT_TEMPLATES: PromptTemplates = {
     "Email context:\n{{email_context}}\n\n" +
     "Latest generated result:\n{{latest_result}}",
 };
+
+const HTML_PRESERVATION_RULE =
+  "Critical HTML rule: If the input contains HTML markup, preserve every tag, attribute, and URL exactly. " +
+  "Only modify or translate visible user-facing text content.";
 
 function formatStyle(tone: ToneOption, formality: FormalityOption, length: LengthOption): string {
   const toneInstruction =
@@ -286,6 +297,10 @@ export function buildImproveDraftMessages(
       content: merged.improveDraftSystem,
     },
     {
+      role: "system",
+      content: HTML_PRESERVATION_RULE,
+    },
+    {
       role: "user",
       content: renderTemplate(merged.improveDraftUser, {
         style: formatStyle(tone, formality, length),
@@ -313,6 +328,10 @@ export function buildImproveReplyMessages(
       content: merged.improveReplySystem,
     },
     {
+      role: "system",
+      content: HTML_PRESERVATION_RULE,
+    },
+    {
       role: "user",
       content: renderTemplate(merged.improveReplyUser, {
         style: formatStyle(tone, formality, length),
@@ -335,6 +354,10 @@ export function buildTranslationMessages(
     {
       role: "system",
       content: merged.translationSystem,
+    },
+    {
+      role: "system",
+      content: HTML_PRESERVATION_RULE,
     },
     {
       role: "user",
