@@ -2,7 +2,11 @@
 /* global Office, window, document, navigator */
 
 import { ResultDialogOutgoingMessage, ResultDialogPayload } from "../shared/dialogMessages";
-import { formatStructuredTextAsHtml } from "../shared/richText";
+import {
+  containsHtmlMarkup,
+  formatStructuredTextAsHtml,
+  htmlToPlainText,
+} from "../shared/richText";
 
 const titleNode = document.getElementById("dialog-title") as HTMLElement;
 const metaNode = document.getElementById("dialog-meta") as HTMLElement;
@@ -56,13 +60,31 @@ async function copyCurrentText(): Promise<void> {
     return;
   }
 
-  if (!navigator || !navigator.clipboard || typeof navigator.clipboard.writeText !== "function") {
+  if (!navigator || !navigator.clipboard) {
     setStatus("Clipboard API unavailable.");
     return;
   }
 
   try {
-    await navigator.clipboard.writeText(currentText);
+    const ClipboardItemCtor = (window as any).ClipboardItem;
+    if (
+      containsHtmlMarkup(currentText) &&
+      ClipboardItemCtor &&
+      typeof navigator.clipboard.write === "function"
+    ) {
+      const htmlBlob = new Blob([currentText], { type: "text/html" });
+      const textBlob = new Blob([htmlToPlainText(currentText)], { type: "text/plain" });
+      const item = new ClipboardItemCtor({
+        "text/html": htmlBlob,
+        "text/plain": textBlob,
+      });
+      await navigator.clipboard.write([item]);
+    } else if (typeof navigator.clipboard.writeText === "function") {
+      await navigator.clipboard.writeText(currentText);
+    } else {
+      throw new Error("Clipboard write unavailable");
+    }
+
     setStatus("Copied to clipboard.");
   } catch {
     setStatus("Copy failed.");

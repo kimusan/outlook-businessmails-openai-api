@@ -19,7 +19,9 @@ import {
   getComposeTypeOrUnknown,
   getCurrentBodyText,
   getSelectedTextOrEmpty,
+  insertHtmlAtCursor,
   insertTextAtCursor,
+  setComposeBodyHtml,
   setComposeBodyText,
   splitDraftAndThread,
 } from "../../shared/outlookContext";
@@ -59,7 +61,7 @@ import {
   ResultDialogOutgoingMessage,
   ResultDialogPayload,
 } from "../../shared/dialogMessages";
-import { formatStructuredTextAsHtml } from "../../shared/richText";
+import { containsHtmlMarkup, formatStructuredTextAsHtml, htmlToPlainText } from "../../shared/richText";
 
 export interface AppProps {
   title: string;
@@ -726,6 +728,8 @@ export default function App(props: AppProps) {
         const replyContext = splitDraftAndThread(originalBody);
         const combined = replyContext.threadText ? `${resultText}\n\n${replyContext.threadText}` : resultText;
         await setComposeBodyText(combined);
+      } else if (containsHtmlMarkup(resultText)) {
+        await setComposeBodyHtml(resultText);
       } else {
         await setComposeBodyText(resultText);
       }
@@ -747,12 +751,41 @@ export default function App(props: AppProps) {
         throw new Error("Insert action is available only in compose mode.");
       }
 
-      await insertTextAtCursor(resultText);
+      if (containsHtmlMarkup(resultText)) {
+        await insertHtmlAtCursor(resultText);
+      } else {
+        await insertTextAtCursor(resultText);
+      }
       setStatus("Result inserted at cursor.");
     } catch (error) {
       logError("Insert at cursor failed", error);
       setError((error as Error).message);
     }
+  };
+
+  const copyToClipboard = async (content: string) => {
+    if (!navigator.clipboard) {
+      throw new Error("Clipboard API is unavailable in this client.");
+    }
+
+    const ClipboardItemCtor = (window as any).ClipboardItem;
+    if (containsHtmlMarkup(content) && ClipboardItemCtor && typeof navigator.clipboard.write === "function") {
+      const htmlBlob = new Blob([content], { type: "text/html" });
+      const textBlob = new Blob([htmlToPlainText(content)], { type: "text/plain" });
+      const item = new ClipboardItemCtor({
+        "text/html": htmlBlob,
+        "text/plain": textBlob,
+      });
+      await navigator.clipboard.write([item]);
+      return;
+    }
+
+    if (typeof navigator.clipboard.writeText === "function") {
+      await navigator.clipboard.writeText(content);
+      return;
+    }
+
+    throw new Error("Clipboard write is unavailable in this client.");
   };
 
   const onOpenResultWindow = async () => {
@@ -774,11 +807,7 @@ export default function App(props: AppProps) {
         throw new Error("No generated result is available.");
       }
 
-      if (!navigator.clipboard || typeof navigator.clipboard.writeText !== "function") {
-        throw new Error("Clipboard API is unavailable in this client.");
-      }
-
-      await navigator.clipboard.writeText(resultText);
+      await copyToClipboard(resultText);
       setStatus("Result copied to clipboard.");
     } catch (error) {
       logError("Copy result failed", error);

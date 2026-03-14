@@ -86,6 +86,10 @@ body {
   color: #111827;
 }
 
+.taskpane-markup {
+  white-space: pre-wrap;
+}
+
 .taskpane-markup h2 {
   font-size: 18px;
 }
@@ -112,6 +116,11 @@ body {
 .taskpane-markup li {
   margin: 4px 0;
   line-height: 1.4;
+}
+
+.taskpane-markup a {
+  color: #1d4ed8;
+  text-decoration: underline;
 }
 
 .taskpane-markup .fmt-spacer {

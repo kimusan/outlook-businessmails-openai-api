@@ -52,7 +52,11 @@ function applyInlineFormatting(input: string): string {
   return escaped
     .replace(/`([^`]+)`/g, "<code>$1</code>")
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-    .replace(/(^|\s)\*([^*]+)\*(?=\s|$)/g, "$1<em>$2</em>");
+    .replace(/(^|\s)\*([^*]+)\*(?=\s|$)/g, "$1<em>$2</em>")
+    .replace(
+      /\bhttps?:\/\/[^\s<]+/g,
+      (url) => `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`
+    );
 }
 
 function isSafeHref(href: string): boolean {
@@ -71,11 +75,11 @@ function isSafeHref(href: string): boolean {
   );
 }
 
-function looksLikeHtml(text: string): boolean {
+export function containsHtmlMarkup(text: string): boolean {
   return /<\/?[a-z][\s\S]*>/i.test(text);
 }
 
-function sanitizeHtml(input: string): string {
+export function sanitizeHtmlFragment(input: string): string {
   if (typeof window === "undefined" || typeof window.DOMParser === "undefined") {
     return escapeHtml(input);
   }
@@ -152,6 +156,16 @@ function sanitizeHtml(input: string): string {
   return container.innerHTML;
 }
 
+export function htmlToPlainText(html: string): string {
+  if (typeof window === "undefined" || typeof window.DOMParser === "undefined") {
+    return html;
+  }
+
+  const parser = new window.DOMParser();
+  const parsed = parser.parseFromString(html, "text/html");
+  return (parsed.body.textContent || "").trim();
+}
+
 function formatStructuredText(text: string): string {
   const lines = (text || "").replace(/\r\n/g, "\n").split("\n");
 
@@ -213,8 +227,8 @@ function formatStructuredText(text: string): string {
 
 export function formatStructuredTextAsHtml(text: string): string {
   const normalized = text || "";
-  if (looksLikeHtml(normalized)) {
-    return sanitizeHtml(normalized);
+  if (containsHtmlMarkup(normalized)) {
+    return sanitizeHtmlFragment(normalized);
   }
 
   return formatStructuredText(normalized);

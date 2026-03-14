@@ -96,6 +96,17 @@ export async function setComposeBodyText(text: string): Promise<void> {
   });
 }
 
+export async function setComposeBodyHtml(html: string): Promise<void> {
+  const item = getMailboxItem() as Office.MessageCompose;
+  if (!item || !item.body || typeof item.body.setAsync !== "function") {
+    throw new Error("Current context does not support replacing draft body HTML.");
+  }
+
+  await fromAsyncResult<void>((done) => {
+    item.body.setAsync(html, { coercionType: Office.CoercionType.Html }, done);
+  });
+}
+
 export async function insertTextAtCursor(text: string): Promise<void> {
   const item = getMailboxItem() as Office.MessageCompose;
   if (!item || !item.body || typeof item.body.setSelectedDataAsync !== "function") {
@@ -104,6 +115,17 @@ export async function insertTextAtCursor(text: string): Promise<void> {
 
   await fromAsyncResult<void>((done) => {
     item.body.setSelectedDataAsync(text, { coercionType: Office.CoercionType.Text }, done);
+  });
+}
+
+export async function insertHtmlAtCursor(html: string): Promise<void> {
+  const item = getMailboxItem() as Office.MessageCompose;
+  if (!item || !item.body || typeof item.body.setSelectedDataAsync !== "function") {
+    throw new Error("Current context does not support HTML insertion at cursor.");
+  }
+
+  await fromAsyncResult<void>((done) => {
+    item.body.setSelectedDataAsync(html, { coercionType: Office.CoercionType.Html }, done);
   });
 }
 
