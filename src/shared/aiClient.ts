@@ -1,4 +1,4 @@
-/* global window */
+/* global window, navigator */
 
 import { AiServiceConfig } from "./aiConfig";
 
@@ -40,6 +40,8 @@ export interface AiClientErrorDetails {
   method: "GET" | "POST";
   requestHeaders?: Record<string, string>;
   requestBody?: string;
+  fetchMode?: "cors" | "same-origin" | "no-cors";
+  fetchCredentials?: "omit" | "same-origin" | "include";
   status?: number;
   statusText?: string;
   responseHeaders?: Record<string, string>;
@@ -47,6 +49,7 @@ export interface AiClientErrorDetails {
   requestAttempts?: RequestAttemptDebug[];
   requestPayloadSummary?: Record<string, unknown>;
   underlyingError?: string;
+  networkDiagnostics?: NetworkDiagnostics;
 }
 
 export class AiClientError extends Error {
@@ -72,16 +75,29 @@ export interface RequestAttemptDebug {
   method: "GET" | "POST";
   requestHeaders: Record<string, string>;
   requestBody?: string;
+  fetchMode?: "cors" | "same-origin" | "no-cors";
+  fetchCredentials?: "omit" | "same-origin" | "include";
   status?: number;
   statusText?: string;
   responseHeaders?: Record<string, string>;
   networkError?: string;
+  networkDiagnostics?: NetworkDiagnostics;
 }
 
 interface FetchWithAuthResult {
   response: any;
   requestAttempt: RequestAttemptDebug;
   requestAttempts: RequestAttemptDebug[];
+}
+
+interface NetworkDiagnostics {
+  pageOrigin?: string;
+  targetOrigin?: string;
+  targetProtocol?: string;
+  isCrossOrigin?: boolean;
+  isSecureContext?: boolean;
+  navigatorOnline?: boolean;
+  likelyCauses?: string[];
 }
 
 const accessTokenCache = new Map<string, string>();
@@ -161,6 +177,66 @@ function serializeHeaders(headers: any): Record<string, string> {
   return result;
 }
 
+function buildNetworkDiagnostics(url: string): NetworkDiagnostics {
+  const diagnostics: NetworkDiagnostics = {
+    isSecureContext:
+      typeof window !== "undefined" && typeof window.isSecureContext === "boolean"
+        ? window.isSecureContext
+        : undefined,
+    navigatorOnline:
+      typeof navigator !== "undefined" && typeof navigator.onLine === "boolean"
+        ? navigator.onLine
+        : undefined,
+  };
+
+  try {
+    if (typeof window !== "undefined" && window.location) {
+      diagnostics.pageOrigin = window.location.origin;
+    }
+  } catch {
+    // Ignore location extraction issues.
+  }
+
+  try {
+    const parsed = new window.URL(url);
+    diagnostics.targetOrigin = parsed.origin;
+    diagnostics.targetProtocol = parsed.protocol;
+    diagnostics.isCrossOrigin = diagnostics.pageOrigin
+      ? diagnostics.pageOrigin !== parsed.origin
+      : undefined;
+  } catch {
+    // Ignore target URL parsing issues.
+  }
+
+  const likelyCauses: string[] = [];
+  if (diagnostics.navigatorOnline === false) {
+    likelyCauses.push("Browser reports offline network state.");
+  }
+
+  if (diagnostics.isCrossOrigin) {
+    likelyCauses.push(
+      "Cross-origin request: server must allow CORS (Access-Control-Allow-Origin and auth headers)."
+    );
+  }
+
+  if (diagnostics.pageOrigin?.startsWith("https://") && diagnostics.targetProtocol === "http:") {
+    likelyCauses.push("Mixed-content block: HTTPS add-in cannot call HTTP API.");
+  }
+
+  if (diagnostics.isSecureContext === false) {
+    likelyCauses.push("Browser context is not secure; some fetch/auth features may be blocked.");
+  }
+
+  if (diagnostics.targetProtocol === "https:") {
+    likelyCauses.push(
+      "If this endpoint uses a private/self-signed cert, ensure WebView2 trusts the certificate chain."
+    );
+  }
+
+  diagnostics.likelyCauses = likelyCauses;
+  return diagnostics;
+}
+
 async function parseResponseBody(response: any): Promise<string> {
   try {
     return await response.text();
@@ -224,6 +300,9 @@ export async function refreshAccessToken(
     Accept: "application/json",
   };
   const requestBody = `ums_token=${encodeURIComponent(umsToken)}`;
+  const fetchMode = "cors" as const;
+  const fetchCredentials = "omit" as const;
+  const networkDiagnostics = buildNetworkDiagnostics(refreshEndpoint);
   if (!umsToken) {
     throw new AiClientError("UMS token is required to refresh access token.", {
       operation: "tokenRefresh",
@@ -231,6 +310,9 @@ export async function refreshAccessToken(
       method: "POST",
       requestHeaders,
       requestBody,
+      fetchMode,
+      fetchCredentials,
+      networkDiagnostics,
       requestPayloadSummary: {
         hasUmsToken: false,
         forcedRefresh: forceRefresh,
@@ -244,6 +326,8 @@ export async function refreshAccessToken(
       method: "POST",
       headers: requestHeaders,
       body: requestBody,
+      mode: fetchMode,
+      credentials: fetchCredentials,
     });
   } catch (error) {
     throw new AiClientError("Token refresh request failed before receiving a response.", {
@@ -252,6 +336,9 @@ export async function refreshAccessToken(
       method: "POST",
       requestHeaders,
       requestBody,
+      fetchMode,
+      fetchCredentials,
+      networkDiagnostics,
       requestPayloadSummary: {
         hasUmsToken: true,
         forcedRefresh: forceRefresh,
@@ -277,6 +364,9 @@ export async function refreshAccessToken(
         method: "POST",
         requestHeaders,
         requestBody,
+        fetchMode,
+        fetchCredentials,
+        networkDiagnostics,
         status: response.status,
         statusText: response.statusText,
         responseHeaders: serializeHeaders(response.headers),
@@ -297,6 +387,9 @@ export async function refreshAccessToken(
       method: "POST",
       requestHeaders,
       requestBody,
+      fetchMode,
+      fetchCredentials,
+      networkDiagnostics,
       status: response.status,
       statusText: response.statusText,
       responseHeaders: serializeHeaders(response.headers),
@@ -323,12 +416,18 @@ async function fetchWithAuth(
       ...(request.method === "POST" ? { "Content-Type": "application/json" } : {}),
       Authorization: `Bearer ${accessToken}`,
     };
+    const fetchMode = "cors" as const;
+    const fetchCredentials = "omit" as const;
+    const networkDiagnostics = buildNetworkDiagnostics(request.url);
 
     const attempt: RequestAttemptDebug = {
       url: request.url,
       method: request.method,
       requestHeaders,
       requestBody: request.body,
+      fetchMode,
+      fetchCredentials,
+      networkDiagnostics,
     };
     requestAttempts.push(attempt);
 
@@ -337,6 +436,8 @@ async function fetchWithAuth(
         method: request.method,
         headers: requestHeaders,
         body: request.body,
+        mode: fetchMode,
+        credentials: fetchCredentials,
       });
 
       attempt.status = response.status;
@@ -356,6 +457,9 @@ async function fetchWithAuth(
         method: request.method,
         requestHeaders,
         requestBody: request.body,
+        fetchMode,
+        fetchCredentials,
+        networkDiagnostics,
         requestAttempts,
         requestPayloadSummary: request.requestPayloadSummary,
         underlyingError: (error as Error).message,
@@ -401,10 +505,13 @@ export async function listAvailableModels(config: AiServiceConfig): Promise<stri
         method: "GET",
         requestHeaders: requestAttempt.requestHeaders,
         requestBody: requestAttempt.requestBody,
+        fetchMode: requestAttempt.fetchMode,
+        fetchCredentials: requestAttempt.fetchCredentials,
         status: response.status,
         statusText: response.statusText,
         responseHeaders: requestAttempt.responseHeaders,
         responseBody: truncateForLog(responseBody, 4000),
+        networkDiagnostics: requestAttempt.networkDiagnostics,
         requestAttempts,
       }
     );
@@ -417,10 +524,13 @@ export async function listAvailableModels(config: AiServiceConfig): Promise<stri
       method: "GET",
       requestHeaders: requestAttempt.requestHeaders,
       requestBody: requestAttempt.requestBody,
+      fetchMode: requestAttempt.fetchMode,
+      fetchCredentials: requestAttempt.fetchCredentials,
       status: response.status,
       statusText: response.statusText,
       responseHeaders: requestAttempt.responseHeaders,
       responseBody: truncateForLog(responseBody, 4000),
+      networkDiagnostics: requestAttempt.networkDiagnostics,
       requestAttempts,
     });
   }
@@ -439,10 +549,13 @@ export async function listAvailableModels(config: AiServiceConfig): Promise<stri
       method: "GET",
       requestHeaders: requestAttempt.requestHeaders,
       requestBody: requestAttempt.requestBody,
+      fetchMode: requestAttempt.fetchMode,
+      fetchCredentials: requestAttempt.fetchCredentials,
       status: response.status,
       statusText: response.statusText,
       responseHeaders: requestAttempt.responseHeaders,
       responseBody: truncateForLog(responseBody, 4000),
+      networkDiagnostics: requestAttempt.networkDiagnostics,
       requestAttempts,
     });
   }
@@ -488,10 +601,13 @@ export async function createChatCompletion(
       method: "POST",
       requestHeaders: requestAttempt.requestHeaders,
       requestBody: requestAttempt.requestBody,
+      fetchMode: requestAttempt.fetchMode,
+      fetchCredentials: requestAttempt.fetchCredentials,
       status: response.status,
       statusText: response.statusText,
       responseHeaders: requestAttempt.responseHeaders,
       responseBody: truncateForLog(responseBody, 4000),
+      networkDiagnostics: requestAttempt.networkDiagnostics,
       requestAttempts,
       requestPayloadSummary: {
         model: requestPayload.model,
@@ -509,10 +625,13 @@ export async function createChatCompletion(
       method: "POST",
       requestHeaders: requestAttempt.requestHeaders,
       requestBody: requestAttempt.requestBody,
+      fetchMode: requestAttempt.fetchMode,
+      fetchCredentials: requestAttempt.fetchCredentials,
       status: response.status,
       statusText: response.statusText,
       responseHeaders: requestAttempt.responseHeaders,
       responseBody: truncateForLog(responseBody, 4000),
+      networkDiagnostics: requestAttempt.networkDiagnostics,
       requestAttempts,
       requestPayloadSummary: {
         model: requestPayload.model,
@@ -530,10 +649,13 @@ export async function createChatCompletion(
       method: "POST",
       requestHeaders: requestAttempt.requestHeaders,
       requestBody: requestAttempt.requestBody,
+      fetchMode: requestAttempt.fetchMode,
+      fetchCredentials: requestAttempt.fetchCredentials,
       status: response.status,
       statusText: response.statusText,
       responseHeaders: requestAttempt.responseHeaders,
       responseBody: truncateForLog(responseBody, 4000),
+      networkDiagnostics: requestAttempt.networkDiagnostics,
       requestAttempts,
       requestPayloadSummary: {
         model: requestPayload.model,
