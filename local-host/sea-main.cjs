@@ -4,6 +4,7 @@ const https = require("node:https");
 
 const DEFAULT_PORT = 3000;
 const DEFAULT_HOST = "127.0.0.1";
+const MAX_PROXY_BODY_BYTES = 2 * 1024 * 1024;
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
   ".js": "application/javascript; charset=utf-8",
@@ -175,10 +176,174 @@ function getContentType(filePath) {
   return MIME_TYPES[extension] || "application/octet-stream";
 }
 
+function readRequestBody(request, maxBytes) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let totalBytes = 0;
+
+    request.on("data", (chunk) => {
+      totalBytes += chunk.length;
+      if (totalBytes > maxBytes) {
+        reject(new Error(`Request body exceeded ${maxBytes} bytes.`));
+        request.destroy();
+        return;
+      }
+
+      chunks.push(chunk);
+    });
+
+    request.on("end", () => {
+      resolve(Buffer.concat(chunks).toString("utf8"));
+    });
+
+    request.on("error", (error) => {
+      reject(error);
+    });
+  });
+}
+
+function sanitizeProxyRequestHeaders(input) {
+  const headers = {};
+  if (!input || typeof input !== "object") {
+    return headers;
+  }
+
+  const disallowed = new Set([
+    "host",
+    "content-length",
+    "connection",
+    "transfer-encoding",
+    "accept-encoding",
+    "origin",
+    "referer",
+    "sec-fetch-mode",
+    "sec-fetch-site",
+    "sec-fetch-dest",
+  ]);
+
+  Object.entries(input).forEach(([key, value]) => {
+    const normalizedKey = String(key || "").toLowerCase();
+    if (!normalizedKey || disallowed.has(normalizedKey)) {
+      return;
+    }
+
+    if (typeof value !== "string") {
+      return;
+    }
+
+    headers[normalizedKey] = value;
+  });
+
+  return headers;
+}
+
+async function handleProxyFetch(request, response) {
+  if (request.method !== "POST") {
+    response.writeHead(405, {
+      "Content-Type": "application/json; charset=utf-8",
+      Allow: "POST",
+    });
+    response.end(JSON.stringify({ error: "Method Not Allowed" }));
+    return;
+  }
+
+  let rawBody = "";
+  try {
+    rawBody = await readRequestBody(request, MAX_PROXY_BODY_BYTES);
+  } catch (error) {
+    log("warn", "Proxy request body read failed", { error: error.message });
+    respondJson(response, 413, { error: error.message });
+    return;
+  }
+
+  let payload = null;
+  try {
+    payload = rawBody ? JSON.parse(rawBody) : null;
+  } catch (error) {
+    respondJson(response, 400, { error: "Invalid JSON payload." });
+    return;
+  }
+
+  const targetUrl = payload && typeof payload.url === "string" ? payload.url.trim() : "";
+  const method = payload && typeof payload.method === "string" ? payload.method.toUpperCase() : "";
+  const body = payload && typeof payload.body === "string" ? payload.body : undefined;
+
+  if (!targetUrl) {
+    respondJson(response, 400, { error: "Missing target URL." });
+    return;
+  }
+
+  if (method !== "GET" && method !== "POST") {
+    respondJson(response, 400, { error: "Unsupported method. Only GET and POST are allowed." });
+    return;
+  }
+
+  let parsedTargetUrl = null;
+  try {
+    parsedTargetUrl = new URL(targetUrl);
+  } catch {
+    respondJson(response, 400, { error: "Target URL is invalid." });
+    return;
+  }
+
+  if (parsedTargetUrl.protocol !== "http:" && parsedTargetUrl.protocol !== "https:") {
+    respondJson(response, 400, { error: "Target URL must use http or https." });
+    return;
+  }
+
+  const headers = sanitizeProxyRequestHeaders(payload.headers);
+
+  let upstreamResponse = null;
+  try {
+    upstreamResponse = await fetch(targetUrl, {
+      method,
+      headers,
+      body: method === "POST" ? body : undefined,
+      redirect: "follow",
+    });
+  } catch (error) {
+    log("warn", "Proxy upstream request failed", {
+      targetUrl,
+      method,
+      error: error.message,
+    });
+    respondJson(response, 502, {
+      error: "Proxy upstream request failed before receiving a response.",
+      detail: error.message,
+    });
+    return;
+  }
+
+  const responseHeaders = {};
+  upstreamResponse.headers.forEach((value, key) => {
+    responseHeaders[key] = value;
+  });
+
+  let upstreamBody = "";
+  try {
+    upstreamBody = await upstreamResponse.text();
+  } catch (error) {
+    upstreamBody = "";
+  }
+
+  respondJson(response, 200, {
+    ok: upstreamResponse.ok,
+    status: upstreamResponse.status,
+    statusText: upstreamResponse.statusText,
+    headers: responseHeaders,
+    body: upstreamBody,
+  });
+}
+
 function createRequestHandler(staticDir, port) {
   return (request, response) => {
     const method = request.method || "GET";
     const requestUrl = new URL(request.url || "/", `https://localhost:${port}`);
+
+    if (requestUrl.pathname === "/proxy/fetch") {
+      void handleProxyFetch(request, response);
+      return;
+    }
 
     if (requestUrl.pathname === "/health") {
       respondJson(response, 200, {

@@ -42,6 +42,9 @@ export interface AiClientErrorDetails {
   requestBody?: string;
   fetchMode?: "cors" | "same-origin" | "no-cors";
   fetchCredentials?: "omit" | "same-origin" | "include";
+  usedLocalProxy?: boolean;
+  localProxyUrl?: string;
+  proxyTargetUrl?: string;
   status?: number;
   statusText?: string;
   responseHeaders?: Record<string, string>;
@@ -77,6 +80,9 @@ export interface RequestAttemptDebug {
   requestBody?: string;
   fetchMode?: "cors" | "same-origin" | "no-cors";
   fetchCredentials?: "omit" | "same-origin" | "include";
+  usedLocalProxy?: boolean;
+  localProxyUrl?: string;
+  proxyTargetUrl?: string;
   status?: number;
   statusText?: string;
   responseHeaders?: Record<string, string>;
@@ -98,6 +104,30 @@ interface NetworkDiagnostics {
   isSecureContext?: boolean;
   navigatorOnline?: boolean;
   likelyCauses?: string[];
+}
+
+interface ResponseLike {
+  ok: boolean;
+  status: number;
+  statusText: string;
+  headers: {
+    forEach: (callback: (value: string, key: string) => void) => void;
+    get: (name: string) => string | null;
+  };
+  text: () => Promise<string>;
+}
+
+interface FetchExecutionContext {
+  fetchMode: "cors" | "same-origin" | "no-cors";
+  fetchCredentials: "omit" | "same-origin" | "include";
+  usedLocalProxy: boolean;
+  localProxyUrl?: string;
+  proxyTargetUrl?: string;
+}
+
+interface FetchExecutionResult {
+  response: ResponseLike;
+  context: FetchExecutionContext;
 }
 
 const accessTokenCache = new Map<string, string>();
@@ -237,6 +267,140 @@ function buildNetworkDiagnostics(url: string): NetworkDiagnostics {
   return diagnostics;
 }
 
+function shouldRouteThroughLocalProxy(targetUrl: string): boolean {
+  try {
+    const parsedTarget = new window.URL(targetUrl);
+    const pageOrigin = window.location.origin;
+    const isCrossOrigin = parsedTarget.origin !== pageOrigin;
+    const isMixedContent =
+      window.location.protocol === "https:" && parsedTarget.protocol === "http:";
+    return isCrossOrigin || isMixedContent;
+  } catch {
+    return false;
+  }
+}
+
+function buildResponseLikeFromProxy(payload: {
+  status: number;
+  statusText: string;
+  headers?: Record<string, string>;
+  body?: string;
+  ok?: boolean;
+}): ResponseLike {
+  const headerMap = payload.headers || {};
+  const headers = {
+    forEach(callback: (value: string, key: string) => void) {
+      Object.entries(headerMap).forEach(([key, value]) => callback(value, key));
+    },
+    get(name: string) {
+      const lookup = name.toLowerCase();
+      const match = Object.keys(headerMap).find((key) => key.toLowerCase() === lookup);
+      return match ? headerMap[match] : null;
+    },
+  };
+
+  return {
+    ok:
+      typeof payload.ok === "boolean" ? payload.ok : payload.status >= 200 && payload.status < 300,
+    status: payload.status,
+    statusText: payload.statusText || "",
+    headers,
+    text: async () => payload.body || "",
+  };
+}
+
+async function executeBrowserFetch(
+  url: string,
+  init: {
+    method: "GET" | "POST";
+    headers: Record<string, string>;
+    body?: string;
+  }
+): Promise<FetchExecutionResult> {
+  const directFetchMode = "cors" as const;
+  const directCredentials = "omit" as const;
+
+  if (!shouldRouteThroughLocalProxy(url)) {
+    const directResponse = await window.fetch(url, {
+      method: init.method,
+      headers: init.headers,
+      body: init.body,
+      mode: directFetchMode,
+      credentials: directCredentials,
+    });
+
+    return {
+      response: directResponse as ResponseLike,
+      context: {
+        fetchMode: directFetchMode,
+        fetchCredentials: directCredentials,
+        usedLocalProxy: false,
+      },
+    };
+  }
+
+  const localProxyUrl = new window.URL("/proxy/fetch", window.location.origin).toString();
+  const proxyFetchMode = "same-origin" as const;
+  const proxyCredentials = "omit" as const;
+  const proxyRequest = {
+    url,
+    method: init.method,
+    headers: init.headers,
+    body: init.body,
+  };
+
+  const proxyResponse = await window.fetch(localProxyUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify(proxyRequest),
+    mode: proxyFetchMode,
+    credentials: proxyCredentials,
+  });
+
+  const proxyResponseBody = await proxyResponse.text();
+  if (!proxyResponse.ok) {
+    throw new Error(
+      `Local proxy endpoint failed with status ${proxyResponse.status}: ${truncateForLog(
+        proxyResponseBody,
+        1000
+      )}`
+    );
+  }
+
+  let parsed: any = null;
+  try {
+    parsed = proxyResponseBody ? JSON.parse(proxyResponseBody) : null;
+  } catch {
+    parsed = null;
+  }
+
+  if (!parsed || typeof parsed.status !== "number") {
+    throw new Error("Local proxy returned an invalid response payload.");
+  }
+
+  const responseLike = buildResponseLikeFromProxy({
+    status: parsed.status,
+    statusText: String(parsed.statusText || ""),
+    headers: parsed.headers && typeof parsed.headers === "object" ? parsed.headers : {},
+    body: typeof parsed.body === "string" ? parsed.body : "",
+    ok: typeof parsed.ok === "boolean" ? parsed.ok : undefined,
+  });
+
+  return {
+    response: responseLike,
+    context: {
+      fetchMode: proxyFetchMode,
+      fetchCredentials: proxyCredentials,
+      usedLocalProxy: true,
+      localProxyUrl,
+      proxyTargetUrl: url,
+    },
+  };
+}
+
 async function parseResponseBody(response: any): Promise<string> {
   try {
     return await response.text();
@@ -300,8 +464,6 @@ export async function refreshAccessToken(
     Accept: "application/json",
   };
   const requestBody = `ums_token=${encodeURIComponent(umsToken)}`;
-  const fetchMode = "cors" as const;
-  const fetchCredentials = "omit" as const;
   const networkDiagnostics = buildNetworkDiagnostics(refreshEndpoint);
   if (!umsToken) {
     throw new AiClientError("UMS token is required to refresh access token.", {
@@ -310,8 +472,6 @@ export async function refreshAccessToken(
       method: "POST",
       requestHeaders,
       requestBody,
-      fetchMode,
-      fetchCredentials,
       networkDiagnostics,
       requestPayloadSummary: {
         hasUmsToken: false,
@@ -320,15 +480,20 @@ export async function refreshAccessToken(
     });
   }
 
-  let response: any;
+  let response: ResponseLike;
+  let fetchContext: FetchExecutionContext = {
+    fetchMode: "cors",
+    fetchCredentials: "omit",
+    usedLocalProxy: false,
+  };
   try {
-    response = await window.fetch(refreshEndpoint, {
+    const execution = await executeBrowserFetch(refreshEndpoint, {
       method: "POST",
-      headers: requestHeaders,
+      headers: requestHeaders as Record<string, string>,
       body: requestBody,
-      mode: fetchMode,
-      credentials: fetchCredentials,
     });
+    response = execution.response;
+    fetchContext = execution.context;
   } catch (error) {
     throw new AiClientError("Token refresh request failed before receiving a response.", {
       operation: "tokenRefresh",
@@ -336,8 +501,11 @@ export async function refreshAccessToken(
       method: "POST",
       requestHeaders,
       requestBody,
-      fetchMode,
-      fetchCredentials,
+      fetchMode: fetchContext.fetchMode,
+      fetchCredentials: fetchContext.fetchCredentials,
+      usedLocalProxy: fetchContext.usedLocalProxy,
+      localProxyUrl: fetchContext.localProxyUrl,
+      proxyTargetUrl: fetchContext.proxyTargetUrl,
       networkDiagnostics,
       requestPayloadSummary: {
         hasUmsToken: true,
@@ -364,8 +532,11 @@ export async function refreshAccessToken(
         method: "POST",
         requestHeaders,
         requestBody,
-        fetchMode,
-        fetchCredentials,
+        fetchMode: fetchContext.fetchMode,
+        fetchCredentials: fetchContext.fetchCredentials,
+        usedLocalProxy: fetchContext.usedLocalProxy,
+        localProxyUrl: fetchContext.localProxyUrl,
+        proxyTargetUrl: fetchContext.proxyTargetUrl,
         networkDiagnostics,
         status: response.status,
         statusText: response.statusText,
@@ -387,8 +558,11 @@ export async function refreshAccessToken(
       method: "POST",
       requestHeaders,
       requestBody,
-      fetchMode,
-      fetchCredentials,
+      fetchMode: fetchContext.fetchMode,
+      fetchCredentials: fetchContext.fetchCredentials,
+      usedLocalProxy: fetchContext.usedLocalProxy,
+      localProxyUrl: fetchContext.localProxyUrl,
+      proxyTargetUrl: fetchContext.proxyTargetUrl,
       networkDiagnostics,
       status: response.status,
       statusText: response.statusText,
@@ -416,29 +590,38 @@ async function fetchWithAuth(
       ...(request.method === "POST" ? { "Content-Type": "application/json" } : {}),
       Authorization: `Bearer ${accessToken}`,
     };
-    const fetchMode = "cors" as const;
-    const fetchCredentials = "omit" as const;
     const networkDiagnostics = buildNetworkDiagnostics(request.url);
+    let fetchContext: FetchExecutionContext = {
+      fetchMode: "cors",
+      fetchCredentials: "omit",
+      usedLocalProxy: false,
+    };
 
     const attempt: RequestAttemptDebug = {
       url: request.url,
       method: request.method,
       requestHeaders,
       requestBody: request.body,
-      fetchMode,
-      fetchCredentials,
+      fetchMode: fetchContext.fetchMode,
+      fetchCredentials: fetchContext.fetchCredentials,
+      usedLocalProxy: fetchContext.usedLocalProxy,
       networkDiagnostics,
     };
     requestAttempts.push(attempt);
 
     try {
-      const response = await window.fetch(request.url, {
+      const execution = await executeBrowserFetch(request.url, {
         method: request.method,
         headers: requestHeaders,
         body: request.body,
-        mode: fetchMode,
-        credentials: fetchCredentials,
       });
+      const response = execution.response;
+      fetchContext = execution.context;
+      attempt.fetchMode = fetchContext.fetchMode;
+      attempt.fetchCredentials = fetchContext.fetchCredentials;
+      attempt.usedLocalProxy = fetchContext.usedLocalProxy;
+      attempt.localProxyUrl = fetchContext.localProxyUrl;
+      attempt.proxyTargetUrl = fetchContext.proxyTargetUrl;
 
       attempt.status = response.status;
       attempt.statusText = response.statusText;
@@ -457,8 +640,11 @@ async function fetchWithAuth(
         method: request.method,
         requestHeaders,
         requestBody: request.body,
-        fetchMode,
-        fetchCredentials,
+        fetchMode: fetchContext.fetchMode,
+        fetchCredentials: fetchContext.fetchCredentials,
+        usedLocalProxy: fetchContext.usedLocalProxy,
+        localProxyUrl: fetchContext.localProxyUrl,
+        proxyTargetUrl: fetchContext.proxyTargetUrl,
         networkDiagnostics,
         requestAttempts,
         requestPayloadSummary: request.requestPayloadSummary,
@@ -507,6 +693,9 @@ export async function listAvailableModels(config: AiServiceConfig): Promise<stri
         requestBody: requestAttempt.requestBody,
         fetchMode: requestAttempt.fetchMode,
         fetchCredentials: requestAttempt.fetchCredentials,
+        usedLocalProxy: requestAttempt.usedLocalProxy,
+        localProxyUrl: requestAttempt.localProxyUrl,
+        proxyTargetUrl: requestAttempt.proxyTargetUrl,
         status: response.status,
         statusText: response.statusText,
         responseHeaders: requestAttempt.responseHeaders,
@@ -526,6 +715,9 @@ export async function listAvailableModels(config: AiServiceConfig): Promise<stri
       requestBody: requestAttempt.requestBody,
       fetchMode: requestAttempt.fetchMode,
       fetchCredentials: requestAttempt.fetchCredentials,
+      usedLocalProxy: requestAttempt.usedLocalProxy,
+      localProxyUrl: requestAttempt.localProxyUrl,
+      proxyTargetUrl: requestAttempt.proxyTargetUrl,
       status: response.status,
       statusText: response.statusText,
       responseHeaders: requestAttempt.responseHeaders,
@@ -551,6 +743,9 @@ export async function listAvailableModels(config: AiServiceConfig): Promise<stri
       requestBody: requestAttempt.requestBody,
       fetchMode: requestAttempt.fetchMode,
       fetchCredentials: requestAttempt.fetchCredentials,
+      usedLocalProxy: requestAttempt.usedLocalProxy,
+      localProxyUrl: requestAttempt.localProxyUrl,
+      proxyTargetUrl: requestAttempt.proxyTargetUrl,
       status: response.status,
       statusText: response.statusText,
       responseHeaders: requestAttempt.responseHeaders,
@@ -603,6 +798,9 @@ export async function createChatCompletion(
       requestBody: requestAttempt.requestBody,
       fetchMode: requestAttempt.fetchMode,
       fetchCredentials: requestAttempt.fetchCredentials,
+      usedLocalProxy: requestAttempt.usedLocalProxy,
+      localProxyUrl: requestAttempt.localProxyUrl,
+      proxyTargetUrl: requestAttempt.proxyTargetUrl,
       status: response.status,
       statusText: response.statusText,
       responseHeaders: requestAttempt.responseHeaders,
@@ -627,6 +825,9 @@ export async function createChatCompletion(
       requestBody: requestAttempt.requestBody,
       fetchMode: requestAttempt.fetchMode,
       fetchCredentials: requestAttempt.fetchCredentials,
+      usedLocalProxy: requestAttempt.usedLocalProxy,
+      localProxyUrl: requestAttempt.localProxyUrl,
+      proxyTargetUrl: requestAttempt.proxyTargetUrl,
       status: response.status,
       statusText: response.statusText,
       responseHeaders: requestAttempt.responseHeaders,
@@ -651,6 +852,9 @@ export async function createChatCompletion(
       requestBody: requestAttempt.requestBody,
       fetchMode: requestAttempt.fetchMode,
       fetchCredentials: requestAttempt.fetchCredentials,
+      usedLocalProxy: requestAttempt.usedLocalProxy,
+      localProxyUrl: requestAttempt.localProxyUrl,
+      proxyTargetUrl: requestAttempt.proxyTargetUrl,
       status: response.status,
       statusText: response.statusText,
       responseHeaders: requestAttempt.responseHeaders,
