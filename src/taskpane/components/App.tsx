@@ -486,7 +486,8 @@ export default function App(props: AppProps) {
   };
 
   const resolveWorkflowSourceText = async (
-    trySelectionFirst: boolean
+    trySelectionFirst: boolean,
+    allowBodyFallback = true
   ): Promise<{ text: string; usedSelection: boolean }> => {
     if (trySelectionFirst) {
       const selectedText = await getSelectedTextOrEmpty();
@@ -507,6 +508,12 @@ export default function App(props: AppProps) {
           preview: snapshot.text.trim().slice(0, 120),
         });
         return { text: snapshot.text, usedSelection: true };
+      }
+
+      if (!allowBodyFallback) {
+        throw new Error(
+          "No text selection was detected. Select text in the email and run the selection action again."
+        );
       }
     }
 
@@ -771,7 +778,7 @@ export default function App(props: AppProps) {
       }
 
       if (workflow === "improveDraft") {
-        const source = await resolveWorkflowSourceText(true);
+        const source = await resolveWorkflowSourceText(true, preferredScope !== "selection");
         const sourceText = source.usedSelection
           ? source.text
           : splitDraftAndThread(source.text).draftText || source.text;
@@ -830,7 +837,7 @@ export default function App(props: AppProps) {
       }
 
       if (workflow === "summary") {
-        const source = await resolveWorkflowSourceText(true);
+        const source = await resolveWorkflowSourceText(true, preferredScope !== "selection");
         if (!source.text.trim()) {
           throw new Error("No email content found to summarize.");
         }
@@ -854,7 +861,7 @@ export default function App(props: AppProps) {
       }
 
       if (workflow === "translate") {
-        let source = await resolveWorkflowSourceText(true);
+        let source = await resolveWorkflowSourceText(true, preferredScope !== "selection");
         let usedHtml = false;
 
         if (preferredScope === "selection") {
@@ -877,6 +884,12 @@ export default function App(props: AppProps) {
             };
             usedHtml = true;
           }
+        }
+
+        if (!source.usedSelection && !usedHtml && preferredScope === "selection") {
+          throw new Error(
+            "No selection was detected for translation. Select text in the email and run the selection action again."
+          );
         }
 
         if (!source.usedSelection && !usedHtml) {
@@ -1028,7 +1041,7 @@ export default function App(props: AppProps) {
       }
 
       setIsChatLoading(true);
-      const source = await resolveWorkflowSourceText(true);
+      const source = await resolveWorkflowSourceText(true, preferredScope !== "selection");
       const output = await runAi(
         buildChatMessages(
           source.text,
@@ -1068,8 +1081,7 @@ export default function App(props: AppProps) {
         </p>
         {preferredScope === "selection" && (
           <p className="taskpane-config-state">
-            Quick action scope: <b>Selection first</b> (falls back to full draft/message if nothing
-            is selected)
+            Quick action scope: <b>Selection only</b> (operation stops if no selection is detected)
           </p>
         )}
 
