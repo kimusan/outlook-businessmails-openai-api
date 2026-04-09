@@ -1,4 +1,4 @@
-/* global require, Office, window, navigator */
+/* global require, Office, window */
 
 import * as React from "react";
 import {
@@ -65,7 +65,7 @@ import {
   ResultDialogOutgoingMessage,
   ResultDialogPayload,
 } from "../../shared/dialogMessages";
-import { containsHtmlMarkup, formatStructuredTextAsHtml, htmlToPlainText } from "../../shared/richText";
+import { containsHtmlMarkup, formatStructuredTextAsHtml } from "../../shared/richText";
 
 export interface AppProps {
   title: string;
@@ -81,6 +81,114 @@ type SelectionSnapshot = {
   html: string;
   capturedAt: string;
 };
+type UiTheme = "light" | "dark";
+type ResultHistoryEntry = {
+  id: string;
+  itemId: string;
+  workflowKey: Workflow;
+  payload: ResultDialogPayload;
+  createdAt: string;
+};
+
+const RESULT_HISTORY_STORAGE_KEY = "outlookAiAssistant.resultHistoryByItem";
+const MAX_HISTORY_PER_ITEM = 20;
+const MAX_HISTORY_ITEMS = 80;
+
+const workflowDefinitions: Array<{
+  key: Workflow;
+  label: string;
+  shortLabel: string;
+  iconName: string;
+  hostModes: HostMode[];
+}> = [
+  {
+    key: "replyDraft",
+    label: "Draft reply from thread + direction",
+    shortLabel: "Reply",
+    iconName: "ReplyAll",
+    hostModes: ["compose"],
+  },
+  {
+    key: "improveDraft",
+    label: "Improve current draft",
+    shortLabel: "Improve",
+    iconName: "Edit",
+    hostModes: ["compose"],
+  },
+  {
+    key: "improveReplyDraft",
+    label: "Improve reply draft with thread style",
+    shortLabel: "Polish Reply",
+    iconName: "EditCreate",
+    hostModes: ["compose"],
+  },
+  {
+    key: "translate",
+    label: "Translate selected text/message",
+    shortLabel: "Translate",
+    iconName: "LocaleLanguage",
+    hostModes: ["compose", "read"],
+  },
+  {
+    key: "summary",
+    label: "Summarize selected text/message",
+    shortLabel: "Summary",
+    iconName: "BulletedListText",
+    hostModes: ["read"],
+  },
+];
+
+function parseHexColor(color: string): { r: number; g: number; b: number } | null {
+  const normalized = color.trim().replace("#", "");
+  if (!/^[0-9a-fA-F]{6}$/.test(normalized)) {
+    return null;
+  }
+
+  const r = parseInt(normalized.slice(0, 2), 16);
+  const g = parseInt(normalized.slice(2, 4), 16);
+  const b = parseInt(normalized.slice(4, 6), 16);
+  return { r, g, b };
+}
+
+function detectUiTheme(officeThemeBodyColor?: string): UiTheme {
+  const parsed = officeThemeBodyColor ? parseHexColor(officeThemeBodyColor) : null;
+  if (parsed) {
+    const luminance = (0.2126 * parsed.r + 0.7152 * parsed.g + 0.0722 * parsed.b) / 255;
+    return luminance < 0.53 ? "dark" : "light";
+  }
+
+  if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
+    return "dark";
+  }
+
+  return "light";
+}
+
+function loadResultHistoryByItem(): Record<string, ResultHistoryEntry[]> {
+  try {
+    const raw = window.localStorage.getItem(RESULT_HISTORY_STORAGE_KEY);
+    if (!raw) {
+      return {};
+    }
+
+    const parsed = JSON.parse(raw) as Record<string, ResultHistoryEntry[]>;
+    if (!parsed || typeof parsed !== "object") {
+      return {};
+    }
+
+    return parsed;
+  } catch {
+    return {};
+  }
+}
+
+function saveResultHistoryByItem(historyByItem: Record<string, ResultHistoryEntry[]>): void {
+  try {
+    window.localStorage.setItem(RESULT_HISTORY_STORAGE_KEY, JSON.stringify(historyByItem));
+  } catch {
+    // Ignore history persistence failures.
+  }
+}
 
 const toneOptions: IDropdownOption[] = [
   { key: "neutral", text: "Neutral" },
@@ -215,6 +323,9 @@ export default function App(props: AppProps) {
   const hostMode = React.useMemo(() => detectHostMode(), []);
   const preferredScope = React.useMemo(() => detectScopePreference(), []);
   const initialConfig = React.useMemo(() => loadInitialConfig(), []);
+  const [uiTheme, setUiTheme] = React.useState<UiTheme>(() => detectUiTheme());
+  const [officeThemeVars, setOfficeThemeVars] = React.useState<Record<string, string>>({});
+  const [currentItemId, setCurrentItemId] = React.useState<string>(() => getCurrentItemIdOrEmpty());
   const [workflow, setWorkflow] = React.useState<Workflow>(() => detectInitialWorkflow(hostMode));
   const [config, setConfig] = React.useState<AiServiceConfig>(initialConfig);
   const [isConfigVisible, setIsConfigVisible] = React.useState<boolean>(
@@ -232,8 +343,10 @@ export default function App(props: AppProps) {
   const [targetLanguage, setTargetLanguage] = React.useState<SupportedLanguage>(
     initialConfig.preferredLanguage
   );
-  const [resultText, setResultText] = React.useState<string>("");
-  const [latestPayload, setLatestPayload] = React.useState<ResultDialogPayload | null>(null);
+  const [historyByItem, setHistoryByItem] = React.useState<Record<string, ResultHistoryEntry[]>>(() =>
+    loadResultHistoryByItem()
+  );
+  const [selectedHistoryEntryId, setSelectedHistoryEntryId] = React.useState<string>("");
   const [statusText, setStatusText] = React.useState<string>("");
   const [errorText, setErrorText] = React.useState<string>("");
   const [debugLog, setDebugLog] = React.useState<string[]>([]);
@@ -283,6 +396,20 @@ export default function App(props: AppProps) {
       PROMPT_TEMPLATE_DEFINITIONS[0],
     [selectedPromptTemplateKey]
   );
+  const visibleWorkflows = React.useMemo(
+    () => workflowDefinitions.filter((definition) => definition.hostModes.includes(hostMode)),
+    [hostMode]
+  );
+  const currentItemHistory = React.useMemo(
+    () => historyByItem[currentItemId] || [],
+    [historyByItem, currentItemId]
+  );
+  const selectedHistoryEntry = React.useMemo(
+    () => currentItemHistory.find((entry) => entry.id === selectedHistoryEntryId) || null,
+    [currentItemHistory, selectedHistoryEntryId]
+  );
+  const activePayload = selectedHistoryEntry?.payload || null;
+  const resultText = activePayload?.text || "";
 
   React.useEffect(() => {
     let isCancelled = false;
@@ -338,6 +465,116 @@ export default function App(props: AppProps) {
       }
     };
   }, [config]);
+
+  React.useEffect(() => {
+    saveResultHistoryByItem(historyByItem);
+  }, [historyByItem]);
+
+  React.useEffect(() => {
+    const syncCurrentItemId = () => {
+      const nextId = getCurrentItemIdOrEmpty();
+      setCurrentItemId((previous) => (previous === nextId ? previous : nextId));
+    };
+
+    syncCurrentItemId();
+
+    const mailbox = Office?.context?.mailbox as {
+      addHandlerAsync?: (eventType: string, handler: () => void) => void;
+      removeHandlerAsync?: (eventType: string, options: { handler: () => void }) => void;
+    };
+    const itemChangedEvent = (Office as unknown as { EventType?: { ItemChanged?: string } })?.EventType
+      ?.ItemChanged;
+    const onItemChanged = () => syncCurrentItemId();
+
+    if (mailbox && itemChangedEvent && typeof mailbox.addHandlerAsync === "function") {
+      mailbox.addHandlerAsync(itemChangedEvent, onItemChanged);
+    }
+
+    const intervalId = window.setInterval(syncCurrentItemId, 1500);
+
+    return () => {
+      window.clearInterval(intervalId);
+      if (mailbox && itemChangedEvent && typeof mailbox.removeHandlerAsync === "function") {
+        mailbox.removeHandlerAsync(itemChangedEvent, { handler: onItemChanged });
+      }
+    };
+  }, []);
+
+  React.useEffect(() => {
+    if (currentItemHistory.length === 0) {
+      setSelectedHistoryEntryId("");
+      return;
+    }
+
+    const hasSelected = currentItemHistory.some((entry) => entry.id === selectedHistoryEntryId);
+    if (!hasSelected) {
+      setSelectedHistoryEntryId(currentItemHistory[0].id);
+    }
+  }, [currentItemHistory, selectedHistoryEntryId]);
+
+  React.useEffect(() => {
+    const applyTheme = () => {
+      const officeTheme = (Office?.context as unknown as {
+        officeTheme?: {
+          bodyBackgroundColor?: string;
+          bodyForegroundColor?: string;
+          controlBackgroundColor?: string;
+          controlForegroundColor?: string;
+          disabledTextColor?: string;
+        };
+      })?.officeTheme;
+      const nextMode = detectUiTheme(officeTheme?.bodyBackgroundColor);
+      setUiTheme(nextMode);
+      setOfficeThemeVars({
+        "--app-bg": officeTheme?.bodyBackgroundColor || "",
+        "--app-surface": officeTheme?.controlBackgroundColor || "",
+        "--app-text": officeTheme?.bodyForegroundColor || "",
+        "--app-muted": officeTheme?.disabledTextColor || "",
+        "--app-accent": officeTheme?.controlForegroundColor || "",
+      });
+    };
+
+    applyTheme();
+
+    const officeTheme = (Office?.context as unknown as {
+      officeTheme?: {
+        addHandlerAsync?: (eventType: string, handler: () => void) => void;
+        removeHandlerAsync?: (eventType: string, options: { handler: () => void }) => void;
+      };
+    } | null)?.officeTheme;
+    const themeChangedEvent = (Office as unknown as { EventType?: { OfficeThemeChanged?: string } })
+      ?.EventType?.OfficeThemeChanged;
+
+    if (officeTheme && themeChangedEvent && typeof officeTheme.addHandlerAsync === "function") {
+      officeTheme.addHandlerAsync(themeChangedEvent, applyTheme);
+    }
+
+    const mediaQuery = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+    if (mediaQuery) {
+      const onChange = () => applyTheme();
+      mediaQuery.addEventListener("change", onChange);
+      return () => {
+        mediaQuery.removeEventListener("change", onChange);
+        if (
+          officeTheme &&
+          themeChangedEvent &&
+          typeof officeTheme.removeHandlerAsync === "function"
+        ) {
+          officeTheme.removeHandlerAsync(themeChangedEvent, { handler: applyTheme });
+        }
+      };
+    }
+
+    return () => {
+      if (
+        officeTheme &&
+        themeChangedEvent &&
+        typeof officeTheme.removeHandlerAsync === "function"
+      ) {
+        officeTheme.removeHandlerAsync(themeChangedEvent, { handler: applyTheme });
+      }
+    };
+  }, []);
 
   React.useEffect(() => {
     setTargetLanguage(config.preferredLanguage);
@@ -646,10 +883,52 @@ export default function App(props: AppProps) {
     });
   };
 
-  const presentResult = async (payload: ResultDialogPayload): Promise<void> => {
-    setResultText(payload.text);
-    setLatestPayload(payload);
+  const presentResult = async (payload: ResultDialogPayload, workflowKey: Workflow): Promise<void> => {
+    const itemId = getCurrentItemIdOrEmpty() || "__unknown__";
+    const now = new Date().toISOString();
+    const historyEntry: ResultHistoryEntry = {
+      id: `${now}-${Math.random().toString(36).slice(2, 8)}`,
+      itemId,
+      workflowKey,
+      payload,
+      createdAt: now,
+    };
+
+    setHistoryByItem((previous) => {
+      const updatedForItem = [historyEntry, ...(previous[itemId] || [])].slice(0, MAX_HISTORY_PER_ITEM);
+      const next: Record<string, ResultHistoryEntry[]> = {
+        ...previous,
+        [itemId]: updatedForItem,
+      };
+
+      const itemKeys = Object.keys(next);
+      if (itemKeys.length > MAX_HISTORY_ITEMS) {
+        const sortedByMostRecent = itemKeys
+          .map((key) => ({
+            key,
+            latest: next[key][0]?.createdAt || "",
+          }))
+          .sort((a, b) => (a.latest < b.latest ? 1 : -1));
+        sortedByMostRecent.slice(MAX_HISTORY_ITEMS).forEach((entry) => {
+          delete next[entry.key];
+        });
+      }
+
+      return next;
+    });
+    setSelectedHistoryEntryId(historyEntry.id);
     await openOrUpdateResultDialog(payload);
+  };
+
+  const onOpenHistoryEntry = async (entry: ResultHistoryEntry): Promise<void> => {
+    try {
+      setSelectedHistoryEntryId(entry.id);
+      await openOrUpdateResultDialog(entry.payload);
+      setStatus(`Opened history item: ${entry.payload.title}`);
+    } catch (error) {
+      logError("Opening history item failed", error);
+      setError((error as Error).message);
+    }
   };
 
   const onRefreshModels = React.useCallback(async () => {
@@ -764,9 +1043,11 @@ export default function App(props: AppProps) {
     }));
   };
 
-  const onRunWorkflow = async () => {
+  const onRunWorkflow = async (workflowOverride?: Workflow) => {
+    const activeWorkflow = workflowOverride || workflow;
     setErrorText("");
     setStatusText("");
+    setWorkflow(activeWorkflow);
 
     try {
       setIsLoading(true);
@@ -775,7 +1056,7 @@ export default function App(props: AppProps) {
         await captureSelectionSnapshot("run-start");
       }
 
-      if (workflow === "replyDraft") {
+      if (activeWorkflow === "replyDraft") {
         if (!direction.trim()) {
           throw new Error("Direction is required for reply drafting.");
         }
@@ -798,11 +1079,15 @@ export default function App(props: AppProps) {
             config.promptTemplates
           )
         );
-        await presentResult(createDialogPayload("Generated reply draft", getWorkflowLabel(workflow), "Original", output));
+        await presentResult(
+          createDialogPayload("Generated reply draft", getWorkflowLabel(activeWorkflow), "Original", output)
+          ,
+          activeWorkflow
+        );
         setStatus("Reply draft generated.");
       }
 
-      if (workflow === "improveDraft") {
+      if (activeWorkflow === "improveDraft") {
         const source = await resolveWorkflowSourceText(true, preferredScope !== "selection");
         const sourceText = source.usedSelection
           ? source.text
@@ -818,15 +1103,16 @@ export default function App(props: AppProps) {
         await presentResult(
           createDialogPayload(
             source.usedSelection ? "Improved selected text" : "Improved draft",
-            getWorkflowLabel(workflow),
+            getWorkflowLabel(activeWorkflow),
             "Original",
             output
-          )
+          ),
+          activeWorkflow
         );
         setStatus(source.usedSelection ? "Selected text improved." : "Draft improved.");
       }
 
-      if (workflow === "improveReplyDraft") {
+      if (activeWorkflow === "improveReplyDraft") {
         const composeType = await getComposeTypeOrUnknown();
         const bodyText = await getCurrentBodyText();
         const replyContext = splitDraftAndThread(bodyText);
@@ -852,7 +1138,8 @@ export default function App(props: AppProps) {
           )
         );
         await presentResult(
-          createDialogPayload("Improved reply draft", getWorkflowLabel(workflow), "Original", output)
+          createDialogPayload("Improved reply draft", getWorkflowLabel(activeWorkflow), "Original", output),
+          activeWorkflow
         );
         if (composeType.toLowerCase().includes("reply") || replyContext.threadText) {
           setStatus("Reply draft improved with thread style context.");
@@ -861,7 +1148,7 @@ export default function App(props: AppProps) {
         }
       }
 
-      if (workflow === "summary") {
+      if (activeWorkflow === "summary") {
         const source = await resolveWorkflowSourceText(true, preferredScope !== "selection");
         if (!source.text.trim()) {
           throw new Error("No email content found to summarize.");
@@ -873,10 +1160,11 @@ export default function App(props: AppProps) {
         await presentResult(
           createDialogPayload(
             source.usedSelection ? "Summary of selected text" : "Summary of email",
-            getWorkflowLabel(workflow),
+            getWorkflowLabel(activeWorkflow),
             config.preferredLanguage,
             output
-          )
+          ),
+          activeWorkflow
         );
         setStatus(
           source.usedSelection
@@ -885,7 +1173,7 @@ export default function App(props: AppProps) {
         );
       }
 
-      if (workflow === "translate") {
+      if (activeWorkflow === "translate") {
         let source = await resolveWorkflowSourceText(true, preferredScope !== "selection");
         let usedHtml = false;
 
@@ -938,10 +1226,11 @@ export default function App(props: AppProps) {
         await presentResult(
           createDialogPayload(
             source.usedSelection ? "Translation of selected text" : "Translation of email",
-            getWorkflowLabel(workflow),
+            getWorkflowLabel(activeWorkflow),
             targetLanguage,
             output
-          )
+          ),
+          activeWorkflow
         );
         setStatus(
           source.usedSelection
@@ -950,7 +1239,7 @@ export default function App(props: AppProps) {
         );
       }
     } catch (error) {
-      logError(`Workflow ${workflow} failed`, error);
+      logError(`Workflow ${activeWorkflow} failed`, error);
       setError((error as Error).message);
     } finally {
       setIsLoading(false);
@@ -967,7 +1256,8 @@ export default function App(props: AppProps) {
         throw new Error("Apply action is available only in compose mode.");
       }
 
-      if (workflow === "improveReplyDraft" || workflow === "replyDraft") {
+      const activeWorkflowForResult = selectedHistoryEntry?.workflowKey || workflow;
+      if (activeWorkflowForResult === "improveReplyDraft" || activeWorkflowForResult === "replyDraft") {
         const originalBody = await getCurrentBodyText();
         const replyContext = splitDraftAndThread(originalBody);
         const combined = replyContext.threadText ? `${resultText}\n\n${replyContext.threadText}` : resultText;
@@ -1007,58 +1297,6 @@ export default function App(props: AppProps) {
     }
   };
 
-  const copyToClipboard = async (content: string) => {
-    if (!navigator.clipboard) {
-      throw new Error("Clipboard API is unavailable in this client.");
-    }
-
-    const ClipboardItemCtor = (window as any).ClipboardItem;
-    if (containsHtmlMarkup(content) && ClipboardItemCtor && typeof navigator.clipboard.write === "function") {
-      const htmlBlob = new Blob([content], { type: "text/html" });
-      const textBlob = new Blob([htmlToPlainText(content)], { type: "text/plain" });
-      const item = new ClipboardItemCtor({
-        "text/html": htmlBlob,
-        "text/plain": textBlob,
-      });
-      await navigator.clipboard.write([item]);
-      return;
-    }
-
-    if (typeof navigator.clipboard.writeText === "function") {
-      await navigator.clipboard.writeText(content);
-      return;
-    }
-
-    throw new Error("Clipboard write is unavailable in this client.");
-  };
-
-  const onOpenResultWindow = async () => {
-    try {
-      if (!latestPayload) {
-        throw new Error("No generated result is available.");
-      }
-
-      await openOrUpdateResultDialog(latestPayload);
-    } catch (error) {
-      logError("Opening result window failed", error);
-      setError((error as Error).message);
-    }
-  };
-
-  const onCopyLatestResult = async () => {
-    try {
-      if (!resultText.trim()) {
-        throw new Error("No generated result is available.");
-      }
-
-      await copyToClipboard(resultText);
-      setStatus("Result copied to clipboard.");
-    } catch (error) {
-      logError("Copy result failed", error);
-      setError((error as Error).message);
-    }
-  };
-
   const onAskChat = async () => {
     try {
       if (!chatQuestion.trim()) {
@@ -1087,38 +1325,21 @@ export default function App(props: AppProps) {
     }
   };
 
-  const dialogMessageReady = latestPayload ? `${latestPayload.workflow} | ${latestPayload.language}` : "No result yet";
-
   return (
-    <div className="ms-welcome">
+    <div className={`ms-welcome theme-${uiTheme}`} style={officeThemeVars as React.CSSProperties}>
       <main className="ms-welcome__main">
-        <div className="taskpane-heading-row">
-          <h2 className="ms-font-xl ms-fontWeight-semilight ms-fontColor-neutralPrimary">
-            Outlook AI Assistant
-          </h2>
-          <DefaultButton onClick={() => setIsConfigVisible(!isConfigVisible)}>
-            {isConfigVisible ? "Hide configuration" : "Configuration"}
-          </DefaultButton>
+        <div className="taskpane-topbar">
+          <h2 className="taskpane-title">Outlook AI Assistant</h2>
+          <div className="taskpane-top-actions">
+            {!isConfigReady && <span className="taskpane-pill taskpane-pill-warning">Configuration missing</span>}
+            <DefaultButton
+              iconProps={{ iconName: "Settings" }}
+              onClick={() => setIsConfigVisible(!isConfigVisible)}
+            >
+              {isConfigVisible ? "Close" : "Configuration"}
+            </DefaultButton>
+          </div>
         </div>
-        <p className="ms-font-m">Mode: {hostMode === "compose" ? "Compose" : "Read"}</p>
-        <p className="taskpane-config-state">
-          Configuration status: <b>{isConfigReady ? "Ready" : "Setup required"}</b>
-        </p>
-        {preferredScope === "selection" && (
-          <>
-            <p className="taskpane-config-state">
-              Quick action scope: <b>Selection only</b> (operation stops if no selection is detected)
-            </p>
-            <TextField
-              label="Selection override (optional)"
-              multiline
-              rows={3}
-              placeholder="If Outlook can't read selected text, paste the selected lines here."
-              value={selectionOverride}
-              onChange={(_ev, value) => setSelectionOverride(value || "")}
-            />
-          </>
-        )}
 
         {isConfigVisible && (
           <div className="taskpane-section taskpane-config">
@@ -1217,9 +1438,7 @@ export default function App(props: AppProps) {
               <DefaultButton onClick={onRefreshModels} disabled={isLoadingModels}>
                 {isLoadingModels ? "Loading models..." : "Refresh model list"}
               </DefaultButton>
-              <DefaultButton onClick={() => setIsPromptEditorVisible(true)}>
-                Edit prompts
-              </DefaultButton>
+              <DefaultButton onClick={() => setIsPromptEditorVisible(true)}>Edit prompts</DefaultButton>
             </div>
             {config.authMode === "umsToken" && (
               <p className="taskpane-config-state">
@@ -1252,8 +1471,7 @@ export default function App(props: AppProps) {
             )}
             {modelListError && (
               <MessageBar messageBarType={MessageBarType.warning} isMultiline>
-                Unable to load model list: {modelListError}. You can still enter a custom model
-                manually.
+                Unable to load model list: {modelListError}. You can still enter a custom model manually.
               </MessageBar>
             )}
             <SpinButton
@@ -1273,7 +1491,6 @@ export default function App(props: AppProps) {
               <PrimaryButton onClick={onSaveConfig} disabled={isSavingConfig}>
                 Save configuration
               </PrimaryButton>
-              <DefaultButton onClick={() => setIsConfigVisible(false)}>Close</DefaultButton>
             </div>
           </div>
         )}
@@ -1285,33 +1502,38 @@ export default function App(props: AppProps) {
         )}
 
         <div className="taskpane-section">
-          <h3>Workflow</h3>
-          {hostMode === "compose" && (
-            <Dropdown
-              label="Choose action"
-              selectedKey={workflow}
-              options={[
-                { key: "replyDraft", text: "Draft reply from thread + direction" },
-                { key: "improveDraft", text: "Improve current draft" },
-                { key: "improveReplyDraft", text: "Improve current reply draft (thread-aware)" },
-                { key: "translate", text: "Translate current draft" },
-              ]}
-              onChange={(_ev, option) => option && setWorkflow(option.key as Workflow)}
+          <h3>Workflows</h3>
+          <div className="workflow-grid">
+            {visibleWorkflows.map((definition) => (
+              <DefaultButton
+                key={definition.key}
+                className={`workflow-button ${workflow === definition.key ? "is-active" : ""}`}
+                iconProps={{ iconName: definition.iconName }}
+                title={definition.label}
+                onClick={() => {
+                  void onRunWorkflow(definition.key);
+                }}
+                disabled={isLoading || !isConfigReady}
+              >
+                {definition.shortLabel}
+              </DefaultButton>
+            ))}
+          </div>
+          <p className="taskpane-config-state">Tap a workflow button to run with the options below.</p>
+        </div>
+
+        <div className="taskpane-section">
+          <h3>Options</h3>
+          {preferredScope === "selection" && (
+            <TextField
+              label="Selection override (optional)"
+              multiline
+              rows={3}
+              placeholder="If Outlook can't read selected text, paste the selected lines here."
+              value={selectionOverride}
+              onChange={(_ev, value) => setSelectionOverride(value || "")}
             />
           )}
-
-          {hostMode === "read" && (
-            <Dropdown
-              label="Choose action"
-              selectedKey={workflow}
-              options={[
-                { key: "summary", text: "Summarize selected text/message" },
-                { key: "translate", text: "Translate selected text/message" },
-              ]}
-              onChange={(_ev, option) => option && setWorkflow(option.key as Workflow)}
-            />
-          )}
-
           {workflow === "replyDraft" && (
             <TextField
               multiline
@@ -1354,10 +1576,6 @@ export default function App(props: AppProps) {
               onChange={(_ev, option) => option && setTargetLanguage(option.key as SupportedLanguage)}
             />
           )}
-
-          <PrimaryButton onClick={onRunWorkflow} disabled={isLoading}>
-            Run {getWorkflowLabel(workflow)}
-          </PrimaryButton>
         </div>
 
         {isLoading && <Progress title="Loading" message="The AI service is processing your request..." />}
@@ -1370,39 +1588,48 @@ export default function App(props: AppProps) {
 
         {errorText && (
           <MessageBar messageBarType={MessageBarType.error} isMultiline>
-            {errorText} (open Debug log for technical details)
+            {errorText} (open Debug in top-right for technical details)
           </MessageBar>
         )}
 
         <div className="taskpane-section">
-          <div className="taskpane-heading-row">
-            <h3>Latest result</h3>
-            <div className="taskpane-actions">
-              <DefaultButton onClick={onOpenResultWindow} disabled={!latestPayload}>
-                Open large window
-              </DefaultButton>
-              <DefaultButton onClick={onCopyLatestResult} disabled={!resultText.trim()}>
-                Copy
-              </DefaultButton>
+          <h3>Result History</h3>
+          {currentItemHistory.length === 0 && (
+            <p className="taskpane-config-state">No results yet for this email.</p>
+          )}
+          {currentItemHistory.length > 0 && (
+            <div className="history-list">
+              {currentItemHistory.map((entry) => (
+                <button
+                  key={entry.id}
+                  type="button"
+                  className={`history-item ${selectedHistoryEntryId === entry.id ? "is-selected" : ""}`}
+                  onClick={() => {
+                    void onOpenHistoryEntry(entry);
+                  }}
+                >
+                  <span className="history-title">{entry.payload.title}</span>
+                  <span className="history-meta">
+                    {entry.payload.workflow} | {new Date(entry.createdAt).toLocaleString()}
+                  </span>
+                </button>
+              ))}
             </div>
-          </div>
-          <p className="taskpane-config-state">Status: {dialogMessageReady}</p>
-          <div className="taskpane-markup-preview">
-            <div
-              className="taskpane-markup"
-              dangerouslySetInnerHTML={{
-                __html: formatStructuredTextAsHtml(resultText || "No generated result yet."),
-              }}
-            />
-          </div>
-          {hostMode === "compose" && (
+          )}
+          {activePayload && (
+            <div className="taskpane-markup-preview">
+              <div
+                className="taskpane-markup"
+                dangerouslySetInnerHTML={{
+                  __html: formatStructuredTextAsHtml(activePayload.text),
+                }}
+              />
+            </div>
+          )}
+          {hostMode === "compose" && activePayload && (
             <div className="taskpane-actions">
-              <PrimaryButton onClick={onApplyToDraft} disabled={!resultText.trim()}>
-                Replace draft with result
-              </PrimaryButton>
-              <DefaultButton onClick={onInsertAtCursor} disabled={!resultText.trim()}>
-                Insert result at cursor
-              </DefaultButton>
+              <PrimaryButton onClick={onApplyToDraft}>Replace draft with selected result</PrimaryButton>
+              <DefaultButton onClick={onInsertAtCursor}>Insert selected result at cursor</DefaultButton>
             </div>
           )}
         </div>
@@ -1418,7 +1645,7 @@ export default function App(props: AppProps) {
             onChange={(_ev, value) => setChatQuestion(value || "")}
           />
           <div className="taskpane-actions">
-            <PrimaryButton onClick={onAskChat} disabled={isChatLoading}>
+            <PrimaryButton onClick={onAskChat} disabled={isChatLoading || !isConfigReady}>
               {isChatLoading ? "Asking..." : "Ask AI"}
             </PrimaryButton>
           </div>
@@ -1431,29 +1658,33 @@ export default function App(props: AppProps) {
             />
           </div>
         </div>
+      </main>
 
-        <div className="taskpane-section">
+      <DefaultButton
+        className="taskpane-debug-fab"
+        iconProps={{ iconName: "Bug" }}
+        title={isDebugVisible ? "Hide debug panel" : "Show debug panel"}
+        onClick={() => setIsDebugVisible(!isDebugVisible)}
+      />
+      {isDebugVisible && (
+        <div className="taskpane-debug-panel">
           <div className="taskpane-heading-row">
-            <h3>Debug log</h3>
+            <h3>Debug</h3>
             <div className="taskpane-actions">
-              <DefaultButton onClick={() => setIsDebugVisible(!isDebugVisible)}>
-                {isDebugVisible ? "Hide" : "Show"}
-              </DefaultButton>
               <DefaultButton onClick={() => setDebugLog([])} disabled={debugLog.length === 0}>
                 Clear
               </DefaultButton>
+              <DefaultButton onClick={() => setIsDebugVisible(false)}>Close</DefaultButton>
             </div>
           </div>
-          {isDebugVisible && (
-            <TextField
-              multiline
-              rows={12}
-              value={debugLog.length > 0 ? debugLog.join("\n\n-----\n\n") : "No log entries yet."}
-              readOnly
-            />
-          )}
+          <TextField
+            multiline
+            rows={12}
+            value={debugLog.length > 0 ? debugLog.join("\n\n-----\n\n") : "No log entries yet."}
+            readOnly
+          />
         </div>
-      </main>
+      )}
 
       <Dialog
         hidden={!isPromptEditorVisible}
