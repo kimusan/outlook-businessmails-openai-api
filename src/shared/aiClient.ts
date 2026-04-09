@@ -130,6 +130,8 @@ interface FetchExecutionResult {
   context: FetchExecutionContext;
 }
 
+type TokenRefreshPayloadMode = "formUrlEncoded" | "json";
+
 const accessTokenCache = new Map<string, string>();
 
 export function isAiClientError(error: unknown): error is AiClientError {
@@ -409,6 +411,31 @@ async function parseResponseBody(response: any): Promise<string> {
   }
 }
 
+function shouldRetryTokenRefreshWithJson(
+  status: number,
+  responseBody: string,
+  payload: TokenRefreshResponse | null
+): boolean {
+  if (status !== 400 && status !== 415 && status !== 422) {
+    return false;
+  }
+
+  const lowerBody = responseBody.toLowerCase();
+  const lowerErrorMessage = payload?.error?.message?.toLowerCase() || "";
+  const hint =
+    lowerBody.includes("dictionary") ||
+    lowerBody.includes("object") ||
+    lowerBody.includes("unprocessable") ||
+    lowerBody.includes("application/json") ||
+    lowerBody.includes("json") ||
+    lowerErrorMessage.includes("dictionary") ||
+    lowerErrorMessage.includes("object") ||
+    lowerErrorMessage.includes("application/json") ||
+    lowerErrorMessage.includes("json");
+
+  return hint || status === 422;
+}
+
 function extractModelId(
   item: string | { id?: string; name?: string; model?: string }
 ): string | null {
@@ -459,44 +486,55 @@ export async function refreshAccessToken(
 
   const refreshEndpoint = getTokenRefreshEndpoint(config);
   const umsToken = config.umsToken.trim();
-  const requestHeaders = {
-    "Content-Type": "application/x-www-form-urlencoded",
-    Accept: "application/json",
-  };
-  const requestBody = `ums_token=${encodeURIComponent(umsToken)}`;
   const networkDiagnostics = buildNetworkDiagnostics(refreshEndpoint);
+  const requestAttempts: RequestAttemptDebug[] = [];
   if (!umsToken) {
     throw new AiClientError("UMS token is required to refresh access token.", {
       operation: "tokenRefresh",
       url: refreshEndpoint,
       method: "POST",
-      requestHeaders,
-      requestBody,
+      requestHeaders: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Accept: "application/json",
+      },
+      requestBody: "ums_token=[missing]",
       networkDiagnostics,
+      requestAttempts,
       requestPayloadSummary: {
         hasUmsToken: false,
         forcedRefresh: forceRefresh,
+        attemptedPayloadModes: [],
       },
     });
   }
 
-  let response: ResponseLike;
-  let fetchContext: FetchExecutionContext = {
-    fetchMode: "cors",
-    fetchCredentials: "omit",
-    usedLocalProxy: false,
-  };
-  try {
-    const execution = await executeBrowserFetch(refreshEndpoint, {
-      method: "POST",
-      headers: requestHeaders as Record<string, string>,
-      body: requestBody,
-    });
-    response = execution.response;
-    fetchContext = execution.context;
-  } catch (error) {
-    throw new AiClientError("Token refresh request failed before receiving a response.", {
-      operation: "tokenRefresh",
+  const makeTokenRefreshRequest = async (
+    payloadMode: TokenRefreshPayloadMode
+  ): Promise<{
+    response: ResponseLike;
+    responseBody: string;
+    payload: TokenRefreshResponse | null;
+    requestHeaders: Record<string, string>;
+    requestBody: string;
+    fetchContext: FetchExecutionContext;
+    requestAttempt: RequestAttemptDebug;
+  }> => {
+    const requestHeaders: Record<string, string> = {
+      Accept: "application/json",
+      "Content-Type":
+        payloadMode === "json" ? "application/json" : "application/x-www-form-urlencoded",
+    };
+    const requestBody =
+      payloadMode === "json"
+        ? JSON.stringify({ ums_token: umsToken })
+        : `ums_token=${encodeURIComponent(umsToken)}`;
+    let fetchContext: FetchExecutionContext = {
+      fetchMode: "cors",
+      fetchCredentials: "omit",
+      usedLocalProxy: false,
+    };
+
+    const requestAttempt: RequestAttemptDebug = {
       url: refreshEndpoint,
       method: "POST",
       requestHeaders,
@@ -504,29 +542,27 @@ export async function refreshAccessToken(
       fetchMode: fetchContext.fetchMode,
       fetchCredentials: fetchContext.fetchCredentials,
       usedLocalProxy: fetchContext.usedLocalProxy,
-      localProxyUrl: fetchContext.localProxyUrl,
-      proxyTargetUrl: fetchContext.proxyTargetUrl,
       networkDiagnostics,
-      requestPayloadSummary: {
-        hasUmsToken: true,
-        forcedRefresh: forceRefresh,
-      },
-      underlyingError: (error as Error).message,
-    });
-  }
+    };
+    requestAttempts.push(requestAttempt);
 
-  const responseBody = await parseResponseBody(response);
-  let payload: TokenRefreshResponse | null = null;
-  try {
-    payload = responseBody ? (JSON.parse(responseBody) as TokenRefreshResponse) : null;
-  } catch {
-    payload = null;
-  }
-
-  if (!response.ok) {
-    throw new AiClientError(
-      payload?.error?.message || `Token refresh request failed with status ${response.status}`,
-      {
+    let response: ResponseLike;
+    try {
+      const execution = await executeBrowserFetch(refreshEndpoint, {
+        method: "POST",
+        headers: requestHeaders,
+        body: requestBody,
+      });
+      response = execution.response;
+      fetchContext = execution.context;
+      requestAttempt.fetchMode = fetchContext.fetchMode;
+      requestAttempt.fetchCredentials = fetchContext.fetchCredentials;
+      requestAttempt.usedLocalProxy = fetchContext.usedLocalProxy;
+      requestAttempt.localProxyUrl = fetchContext.localProxyUrl;
+      requestAttempt.proxyTargetUrl = fetchContext.proxyTargetUrl;
+    } catch (error) {
+      requestAttempt.networkError = (error as Error).message;
+      throw new AiClientError("Token refresh request failed before receiving a response.", {
         operation: "tokenRefresh",
         url: refreshEndpoint,
         method: "POST",
@@ -538,39 +574,116 @@ export async function refreshAccessToken(
         localProxyUrl: fetchContext.localProxyUrl,
         proxyTargetUrl: fetchContext.proxyTargetUrl,
         networkDiagnostics,
-        status: response.status,
-        statusText: response.statusText,
-        responseHeaders: serializeHeaders(response.headers),
-        responseBody: truncateForLog(responseBody, 4000),
+        requestAttempts,
         requestPayloadSummary: {
           hasUmsToken: true,
           forcedRefresh: forceRefresh,
+          attemptedPayloadModes: requestAttempts.map((attempt) =>
+            attempt.requestHeaders["Content-Type"] === "application/json"
+              ? "json"
+              : "formUrlEncoded"
+          ),
+        },
+        underlyingError: (error as Error).message,
+      });
+    }
+
+    requestAttempt.status = response.status;
+    requestAttempt.statusText = response.statusText;
+    requestAttempt.responseHeaders = serializeHeaders(response.headers);
+
+    const responseBody = await parseResponseBody(response);
+    let payload: TokenRefreshResponse | null = null;
+    try {
+      payload = responseBody ? (JSON.parse(responseBody) as TokenRefreshResponse) : null;
+    } catch {
+      payload = null;
+    }
+
+    return {
+      response,
+      responseBody,
+      payload,
+      requestHeaders,
+      requestBody,
+      fetchContext,
+      requestAttempt,
+    };
+  };
+
+  const firstAttempt = await makeTokenRefreshRequest("formUrlEncoded");
+  let finalAttempt = firstAttempt;
+
+  if (
+    !firstAttempt.response.ok &&
+    shouldRetryTokenRefreshWithJson(
+      firstAttempt.response.status,
+      firstAttempt.responseBody,
+      firstAttempt.payload
+    )
+  ) {
+    finalAttempt = await makeTokenRefreshRequest("json");
+  }
+
+  if (!finalAttempt.response.ok) {
+    throw new AiClientError(
+      finalAttempt.payload?.error?.message ||
+        `Token refresh request failed with status ${finalAttempt.response.status}`,
+      {
+        operation: "tokenRefresh",
+        url: refreshEndpoint,
+        method: "POST",
+        requestHeaders: finalAttempt.requestHeaders,
+        requestBody: finalAttempt.requestBody,
+        fetchMode: finalAttempt.fetchContext.fetchMode,
+        fetchCredentials: finalAttempt.fetchContext.fetchCredentials,
+        usedLocalProxy: finalAttempt.fetchContext.usedLocalProxy,
+        localProxyUrl: finalAttempt.fetchContext.localProxyUrl,
+        proxyTargetUrl: finalAttempt.fetchContext.proxyTargetUrl,
+        networkDiagnostics,
+        status: finalAttempt.response.status,
+        statusText: finalAttempt.response.statusText,
+        responseHeaders: serializeHeaders(finalAttempt.response.headers),
+        responseBody: truncateForLog(finalAttempt.responseBody, 4000),
+        requestAttempts,
+        requestPayloadSummary: {
+          hasUmsToken: true,
+          forcedRefresh: forceRefresh,
+          attemptedPayloadModes: requestAttempts.map((attempt) =>
+            attempt.requestHeaders["Content-Type"] === "application/json"
+              ? "json"
+              : "formUrlEncoded"
+          ),
         },
       }
     );
   }
 
-  const accessToken = payload?.access_token?.trim();
+  const accessToken = finalAttempt.payload?.access_token?.trim();
   if (!accessToken) {
     throw new AiClientError("Token refresh response did not include access_token.", {
       operation: "tokenRefresh",
       url: refreshEndpoint,
       method: "POST",
-      requestHeaders,
-      requestBody,
-      fetchMode: fetchContext.fetchMode,
-      fetchCredentials: fetchContext.fetchCredentials,
-      usedLocalProxy: fetchContext.usedLocalProxy,
-      localProxyUrl: fetchContext.localProxyUrl,
-      proxyTargetUrl: fetchContext.proxyTargetUrl,
+      requestHeaders: finalAttempt.requestHeaders,
+      requestBody: finalAttempt.requestBody,
+      fetchMode: finalAttempt.fetchContext.fetchMode,
+      fetchCredentials: finalAttempt.fetchContext.fetchCredentials,
+      usedLocalProxy: finalAttempt.fetchContext.usedLocalProxy,
+      localProxyUrl: finalAttempt.fetchContext.localProxyUrl,
+      proxyTargetUrl: finalAttempt.fetchContext.proxyTargetUrl,
       networkDiagnostics,
-      status: response.status,
-      statusText: response.statusText,
-      responseHeaders: serializeHeaders(response.headers),
-      responseBody: truncateForLog(responseBody, 4000),
+      status: finalAttempt.response.status,
+      statusText: finalAttempt.response.statusText,
+      responseHeaders: serializeHeaders(finalAttempt.response.headers),
+      responseBody: truncateForLog(finalAttempt.responseBody, 4000),
+      requestAttempts,
       requestPayloadSummary: {
         hasUmsToken: true,
         forcedRefresh: forceRefresh,
+        attemptedPayloadModes: requestAttempts.map((attempt) =>
+          attempt.requestHeaders["Content-Type"] === "application/json" ? "json" : "formUrlEncoded"
+        ),
       },
     });
   }
