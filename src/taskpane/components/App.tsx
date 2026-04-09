@@ -47,6 +47,7 @@ import {
   AiServiceConfig,
   DEFAULT_AI_CONFIG,
   loadAiServiceConfig,
+  loadAiServiceConfigAsync,
   saveAiServiceConfig,
   validateAiServiceConfig,
 } from "../../shared/aiConfig";
@@ -239,6 +240,7 @@ export default function App(props: AppProps) {
   const [chatQuestion, setChatQuestion] = React.useState<string>("");
   const [chatResponse, setChatResponse] = React.useState<string>("");
   const [isChatLoading, setIsChatLoading] = React.useState<boolean>(false);
+  const hasInitializedAutoSaveRef = React.useRef<boolean>(false);
   const dialogRef = React.useRef<Office.Dialog | null>(null);
   const isConfigReady = validateAiServiceConfig(config) === null;
 
@@ -272,6 +274,61 @@ export default function App(props: AppProps) {
       PROMPT_TEMPLATE_DEFINITIONS[0],
     [selectedPromptTemplateKey]
   );
+
+  React.useEffect(() => {
+    let isCancelled = false;
+
+    void (async () => {
+      try {
+        const persistedConfig = await loadAiServiceConfigAsync();
+        if (isCancelled) {
+          return;
+        }
+
+        setConfig((previous) => {
+          const previousSerialized = JSON.stringify(previous);
+          const persistedSerialized = JSON.stringify(persistedConfig);
+          return previousSerialized === persistedSerialized ? previous : persistedConfig;
+        });
+
+        if (validateAiServiceConfig(persistedConfig) === null) {
+          setIsConfigVisible(false);
+        }
+      } catch {
+        // Ignore hydration failures and continue using synchronously loaded config.
+      }
+    })();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
+
+  React.useEffect(() => {
+    let timeoutId: number | null = null;
+
+    if (!hasInitializedAutoSaveRef.current) {
+      hasInitializedAutoSaveRef.current = true;
+    } else {
+      timeoutId = window.setTimeout(() => {
+        void saveAiServiceConfig(config).catch((error) => {
+          const timestamp = new Date().toISOString();
+          const entry = `[${timestamp}] Configuration auto-save failed\n${JSON.stringify(
+            { message: (error as Error).message || String(error) },
+            null,
+            2
+          )}`;
+          setDebugLog((previous) => [entry, ...previous].slice(0, 80));
+        });
+      }, 700);
+    }
+
+    return () => {
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
+    };
+  }, [config]);
 
   React.useEffect(() => {
     setTargetLanguage(config.preferredLanguage);

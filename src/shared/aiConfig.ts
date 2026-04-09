@@ -1,4 +1,4 @@
-/* global Office, window */
+/* global Office, window, globalThis */
 
 import {
   DEFAULT_PROMPT_TEMPLATES,
@@ -49,6 +49,26 @@ function getRoamingSettings(): Office.RoamingSettings | null {
   }
 
   return Office.context.roamingSettings;
+}
+
+interface RuntimeStorageLike {
+  getItem: (key: string) => Promise<string | null | undefined>;
+  setItem: (key: string, value: string) => Promise<void>;
+}
+
+function getRuntimeStorage(): RuntimeStorageLike | null {
+  const runtimeStorage = (globalThis as { OfficeRuntime?: { storage?: unknown } }).OfficeRuntime
+    ?.storage as Partial<RuntimeStorageLike> | undefined;
+
+  if (
+    !runtimeStorage ||
+    typeof runtimeStorage.getItem !== "function" ||
+    typeof runtimeStorage.setItem !== "function"
+  ) {
+    return null;
+  }
+
+  return runtimeStorage as RuntimeStorageLike;
 }
 
 function normalizePath(value: unknown, fallback: string): string {
@@ -134,54 +154,111 @@ function normalizeConfig(
   };
 }
 
+function parseStoredConfig(rawValue: unknown): AiServiceConfig | null {
+  if (!rawValue) {
+    return null;
+  }
+
+  try {
+    if (typeof rawValue === "string") {
+      return normalizeConfig(
+        JSON.parse(rawValue) as Partial<AiServiceConfig & LegacyAiServiceConfig>
+      );
+    }
+
+    if (typeof rawValue === "object") {
+      return normalizeConfig(rawValue as Partial<AiServiceConfig & LegacyAiServiceConfig>);
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
 export function loadAiServiceConfig(): AiServiceConfig {
   const roamingSettings = getRoamingSettings();
   if (roamingSettings) {
-    const value = roamingSettings.get(STORAGE_KEY);
-    if (value) {
-      return normalizeConfig(value as Partial<AiServiceConfig & LegacyAiServiceConfig>);
+    const roamingConfig = parseStoredConfig(roamingSettings.get(STORAGE_KEY));
+    if (roamingConfig) {
+      return roamingConfig;
     }
   }
 
   try {
-    const localValue = window.localStorage.getItem(STORAGE_KEY);
-    if (!localValue) {
-      return { ...DEFAULT_AI_CONFIG };
+    const localConfig = parseStoredConfig(window.localStorage.getItem(STORAGE_KEY));
+    if (localConfig) {
+      return localConfig;
     }
-
-    return normalizeConfig(
-      JSON.parse(localValue) as Partial<AiServiceConfig & LegacyAiServiceConfig>
-    );
   } catch {
-    return { ...DEFAULT_AI_CONFIG };
+    // Ignore local storage failures.
   }
+
+  return { ...DEFAULT_AI_CONFIG };
+}
+
+export async function loadAiServiceConfigAsync(): Promise<AiServiceConfig> {
+  const runtimeStorage = getRuntimeStorage();
+  if (runtimeStorage) {
+    try {
+      const runtimeConfig = parseStoredConfig(await runtimeStorage.getItem(STORAGE_KEY));
+      if (runtimeConfig) {
+        return runtimeConfig;
+      }
+    } catch {
+      // Ignore runtime storage failures and continue with synchronous fallbacks.
+    }
+  }
+
+  return loadAiServiceConfig();
 }
 
 export async function saveAiServiceConfig(config: AiServiceConfig): Promise<void> {
   const normalized = normalizeConfig(config);
+  const serialized = JSON.stringify(normalized);
+  let persisted = false;
+  let lastError: Error | null = null;
 
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
-  } catch {
-    // Ignore local storage issues and still attempt roaming settings.
+    window.localStorage.setItem(STORAGE_KEY, serialized);
+    persisted = true;
+  } catch (error) {
+    lastError = error as Error;
+  }
+
+  const runtimeStorage = getRuntimeStorage();
+  if (runtimeStorage) {
+    try {
+      await runtimeStorage.setItem(STORAGE_KEY, serialized);
+      persisted = true;
+    } catch (error) {
+      lastError = error as Error;
+    }
   }
 
   const roamingSettings = getRoamingSettings();
-  if (!roamingSettings) {
-    return;
+  if (roamingSettings) {
+    try {
+      roamingSettings.set(STORAGE_KEY, normalized);
+
+      await new Promise<void>((resolve, reject) => {
+        roamingSettings.saveAsync((asyncResult) => {
+          if (asyncResult.status === Office.AsyncResultStatus.Succeeded) {
+            resolve();
+          } else {
+            reject(new Error(asyncResult.error.message));
+          }
+        });
+      });
+      persisted = true;
+    } catch (error) {
+      lastError = error as Error;
+    }
   }
 
-  roamingSettings.set(STORAGE_KEY, normalized);
-
-  await new Promise<void>((resolve, reject) => {
-    roamingSettings.saveAsync((asyncResult) => {
-      if (asyncResult.status === Office.AsyncResultStatus.Succeeded) {
-        resolve();
-      } else {
-        reject(new Error(asyncResult.error.message));
-      }
-    });
-  });
+  if (!persisted) {
+    throw lastError || new Error("Unable to persist configuration in available local stores.");
+  }
 }
 
 export function validateAiServiceConfig(config: AiServiceConfig): string | null {
