@@ -394,7 +394,41 @@ export default function App(props: AppProps) {
       throw new Error(validationError);
     }
 
-    return createChatCompletion(config, messages);
+    return createChatCompletion(config, messages, {
+      onProgress: (event) => {
+        if (event.stage === "requestStarted") {
+          setStatusText("Contacting AI service...");
+          return;
+        }
+
+        if (event.stage === "responseReceived") {
+          setStatusText("AI response received. Processing output...");
+          return;
+        }
+
+        if (event.stage === "streamDetected") {
+          setStatusText("Streaming response detected. Building final output...");
+          return;
+        }
+
+        if (event.stage === "reasoningOnlyDetected") {
+          appendDebugLog("Reasoning-only stream detected", event.detail);
+          setStatusText("Reasoning output detected. Requesting final answer...");
+          return;
+        }
+
+        if (event.stage === "reasoningFollowUpStarted") {
+          appendDebugLog("Starting reasoning follow-up pass", event.detail);
+          setStatusText("Generating final answer from reasoning output...");
+          return;
+        }
+
+        if (event.stage === "reasoningFollowUpCompleted") {
+          appendDebugLog("Reasoning follow-up pass completed", event.detail);
+          setStatusText("Final answer ready.");
+        }
+      },
+    });
   };
 
   const resolveWorkflowSourceText = async (

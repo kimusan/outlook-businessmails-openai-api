@@ -148,6 +148,24 @@ interface StreamedChatCompletionParseResult {
 
 type TokenRefreshPayloadMode = "formUrlEncoded" | "json";
 
+export type ChatCompletionProgressStage =
+  | "requestStarted"
+  | "responseReceived"
+  | "streamDetected"
+  | "reasoningOnlyDetected"
+  | "reasoningFollowUpStarted"
+  | "reasoningFollowUpCompleted";
+
+export interface ChatCompletionProgressEvent {
+  stage: ChatCompletionProgressStage;
+  detail?: Record<string, unknown>;
+}
+
+export interface CreateChatCompletionOptions {
+  onProgress?: (event: ChatCompletionProgressEvent) => void;
+  allowReasoningFollowUp?: boolean;
+}
+
 const accessTokenCache = new Map<string, string>();
 
 export function isAiClientError(error: unknown): error is AiClientError {
@@ -525,6 +543,46 @@ function extractTextFromChatCompletionPayload(payload: ChatCompletionResponse | 
   });
 
   return pieces.join("");
+}
+
+function emitChatProgress(
+  options: CreateChatCompletionOptions | undefined,
+  stage: ChatCompletionProgressStage,
+  detail?: Record<string, unknown>
+): void {
+  if (!options || typeof options.onProgress !== "function") {
+    return;
+  }
+
+  try {
+    options.onProgress({ stage, detail });
+  } catch {
+    // Ignore progress callback errors and keep AI call flow running.
+  }
+}
+
+function buildReasoningFollowUpMessages(
+  originalMessages: ChatMessage[],
+  reasoningContent: string
+): ChatMessage[] {
+  const finalizeSystemMessage: ChatMessage = {
+    role: "system",
+    content:
+      "You are preparing a final user-facing answer. Return only the final answer content, no chain-of-thought or internal reasoning.",
+  };
+
+  const finalizeUserMessage: ChatMessage = {
+    role: "user",
+    content:
+      "Provide the final answer now using the context below.\n\n" +
+      "Original request/context:\n" +
+      originalMessages.map((message) => `[${message.role}] ${message.content}`).join("\n\n") +
+      "\n\nReasoning/context notes:\n" +
+      reasoningContent +
+      "\n\nReturn final answer only.",
+  };
+
+  return [finalizeSystemMessage, finalizeUserMessage];
 }
 
 function parseStreamedChatCompletionBody(
@@ -1026,7 +1084,8 @@ export async function listAvailableModels(config: AiServiceConfig): Promise<stri
 
 export async function createChatCompletion(
   config: AiServiceConfig,
-  messages: ChatMessage[]
+  messages: ChatMessage[],
+  options?: CreateChatCompletionOptions
 ): Promise<string> {
   const chatCompletionEndpoint = getChatCompletionEndpoint(config);
   const requestPayload = {
@@ -1035,6 +1094,11 @@ export async function createChatCompletion(
     stream: false,
     messages,
   };
+
+  emitChatProgress(options, "requestStarted", {
+    model: requestPayload.model,
+    messageCount: requestPayload.messages.length,
+  });
 
   const { response, requestAttempt, requestAttempts } = await fetchWithAuth(config, {
     operation: "chatCompletion",
@@ -1051,6 +1115,18 @@ export async function createChatCompletion(
   const responseBody = await parseResponseBody(response);
   const responseContentType = requestAttempt.responseHeaders?.["content-type"] || "";
   const streamedResult = parseStreamedChatCompletionBody(responseBody);
+  emitChatProgress(options, "responseReceived", {
+    status: response.status,
+    contentType: responseContentType,
+    usedLocalProxy: requestAttempt.usedLocalProxy,
+  });
+  if (streamedResult) {
+    emitChatProgress(options, "streamDetected", {
+      chunkCount: streamedResult.chunkCount,
+      parsedChunkCount: streamedResult.parsedChunkCount,
+      parseErrorCount: streamedResult.parseErrorCount,
+    });
+  }
 
   let payload: ChatCompletionResponse | null = null;
   try {
@@ -1128,6 +1204,64 @@ export async function createChatCompletion(
   const content = payloadContent || streamContent;
 
   if (!content && streamReasoning) {
+    emitChatProgress(options, "reasoningOnlyDetected", {
+      reasoningPreview: truncateForLog(streamReasoning, 160),
+      reasoningLength: streamReasoning.length,
+    });
+
+    if (options?.allowReasoningFollowUp !== false) {
+      emitChatProgress(options, "reasoningFollowUpStarted", {
+        reasoningLength: streamReasoning.length,
+      });
+      const followUpMessages = buildReasoningFollowUpMessages(messages, streamReasoning);
+      try {
+        const followUpResult = await createChatCompletion(config, followUpMessages, {
+          ...options,
+          allowReasoningFollowUp: false,
+        });
+        emitChatProgress(options, "reasoningFollowUpCompleted", {
+          outputLength: followUpResult.trim().length,
+        });
+        if (followUpResult.trim()) {
+          return followUpResult.trim();
+        }
+      } catch (error) {
+        throw new AiClientError(
+          "Reasoning-only response was returned and automatic finalization did not produce final content.",
+          {
+            operation: "chatCompletion",
+            url: chatCompletionEndpoint,
+            method: "POST",
+            requestHeaders: requestAttempt.requestHeaders,
+            requestBody: requestAttempt.requestBody,
+            fetchMode: requestAttempt.fetchMode,
+            fetchCredentials: requestAttempt.fetchCredentials,
+            usedLocalProxy: requestAttempt.usedLocalProxy,
+            localProxyUrl: requestAttempt.localProxyUrl,
+            proxyTargetUrl: requestAttempt.proxyTargetUrl,
+            status: response.status,
+            statusText: response.statusText,
+            responseHeaders: requestAttempt.responseHeaders,
+            responseBody: truncateForLog(responseBody, 4000),
+            networkDiagnostics: requestAttempt.networkDiagnostics,
+            requestAttempts,
+            requestPayloadSummary: {
+              model: requestPayload.model,
+              temperature: requestPayload.temperature,
+              messageCount: requestPayload.messages.length,
+              responseContentType,
+              streamDetected: Boolean(streamedResult),
+              streamChunkCount: streamedResult?.chunkCount,
+              streamParsedChunkCount: streamedResult?.parsedChunkCount,
+              streamParseErrorCount: streamedResult?.parseErrorCount,
+              reasoningPreview: truncateForLog(streamReasoning, 240),
+            },
+            underlyingError: error instanceof Error ? error.message : String(error),
+          }
+        );
+      }
+    }
+
     throw new AiClientError(
       "Model returned reasoning/thinking text but no final assistant content. Use a non-reasoning model or adjust model settings to return final content.",
       {
