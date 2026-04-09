@@ -184,6 +184,15 @@ export async function getComposeTypeOrUnknown(): Promise<string> {
   }
 }
 
+export function getCurrentItemIdOrEmpty(): string {
+  const item = getMailboxItem() as { itemId?: unknown } | null;
+  if (!item || typeof item.itemId !== "string") {
+    return "";
+  }
+
+  return item.itemId.trim();
+}
+
 export function splitDraftAndThread(bodyText: string): ReplyContext {
   if (!bodyText || bodyText.trim().length === 0) {
     return { draftText: "", threadText: "" };

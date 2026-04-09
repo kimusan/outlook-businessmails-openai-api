@@ -19,6 +19,7 @@ import {
   getComposeTypeOrUnknown,
   getCurrentBodyHtml,
   getCurrentBodyText,
+  getCurrentItemIdOrEmpty,
   getSelectedHtmlOrEmpty,
   getSelectedTextOrEmpty,
   insertHtmlAtCursor,
@@ -74,6 +75,12 @@ export interface AppProps {
 type HostMode = "compose" | "read";
 type Workflow = "replyDraft" | "improveDraft" | "improveReplyDraft" | "translate" | "summary";
 type ContentScope = "body" | "selection";
+type SelectionSnapshot = {
+  itemId: string;
+  text: string;
+  html: string;
+  capturedAt: string;
+};
 
 const toneOptions: IDropdownOption[] = [
   { key: "neutral", text: "Neutral" },
@@ -241,6 +248,7 @@ export default function App(props: AppProps) {
   const [chatResponse, setChatResponse] = React.useState<string>("");
   const [isChatLoading, setIsChatLoading] = React.useState<boolean>(false);
   const hasInitializedAutoSaveRef = React.useRef<boolean>(false);
+  const selectionSnapshotRef = React.useRef<SelectionSnapshot | null>(null);
   const dialogRef = React.useRef<Office.Dialog | null>(null);
   const isConfigReady = validateAiServiceConfig(config) === null;
 
@@ -431,6 +439,52 @@ export default function App(props: AppProps) {
     });
   };
 
+  const captureSelectionSnapshot = React.useCallback(
+    async (reason: string): Promise<void> => {
+      try {
+        const itemId = getCurrentItemIdOrEmpty();
+        const [selectedText, selectedHtml] = await Promise.all([
+          getSelectedTextOrEmpty(),
+          getSelectedHtmlOrEmpty(),
+        ]);
+
+        selectionSnapshotRef.current = {
+          itemId,
+          text: selectedText,
+          html: selectedHtml,
+          capturedAt: new Date().toISOString(),
+        };
+
+        appendDebugLog("Selection snapshot captured", {
+          reason,
+          itemId: itemId || "[empty]",
+          textChars: selectedText.trim().length,
+          htmlChars: selectedHtml.trim().length,
+        });
+      } catch (error) {
+        appendDebugLog("Selection snapshot capture failed", {
+          reason,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    },
+    []
+  );
+
+  const getSelectionSnapshotForCurrentItem = (): SelectionSnapshot | null => {
+    const snapshot = selectionSnapshotRef.current;
+    if (!snapshot) {
+      return null;
+    }
+
+    const currentItemId = getCurrentItemIdOrEmpty();
+    if (!snapshot.itemId || !currentItemId || snapshot.itemId !== currentItemId) {
+      return null;
+    }
+
+    return snapshot;
+  };
+
   const resolveWorkflowSourceText = async (
     trySelectionFirst: boolean
   ): Promise<{ text: string; usedSelection: boolean }> => {
@@ -444,11 +498,25 @@ export default function App(props: AppProps) {
       if (selectedText.trim()) {
         return { text: selectedText, usedSelection: true };
       }
+
+      const snapshot = getSelectionSnapshotForCurrentItem();
+      if (snapshot && snapshot.text.trim()) {
+        appendDebugLog("Using selection snapshot fallback", {
+          chars: snapshot.text.trim().length,
+          capturedAt: snapshot.capturedAt,
+          preview: snapshot.text.trim().slice(0, 120),
+        });
+        return { text: snapshot.text, usedSelection: true };
+      }
     }
 
     const bodyText = await getCurrentBodyText();
     return { text: bodyText, usedSelection: false };
   };
+
+  React.useEffect(() => {
+    void captureSelectionSnapshot("mount");
+  }, [captureSelectionSnapshot]);
 
   const getResultDialogUrl = () => {
     const currentUrl = new URL(window.location.href);
@@ -671,6 +739,10 @@ export default function App(props: AppProps) {
     try {
       setIsLoading(true);
 
+      if (preferredScope === "selection") {
+        await captureSelectionSnapshot("run-start");
+      }
+
       if (workflow === "replyDraft") {
         if (!direction.trim()) {
           throw new Error("Direction is required for reply drafting.");
@@ -786,7 +858,18 @@ export default function App(props: AppProps) {
         let usedHtml = false;
 
         if (preferredScope === "selection") {
-          const selectedHtml = await getSelectedHtmlOrEmpty();
+          let selectedHtml = await getSelectedHtmlOrEmpty();
+          if (!selectedHtml.trim()) {
+            const snapshot = getSelectionSnapshotForCurrentItem();
+            if (snapshot && snapshot.html.trim()) {
+              selectedHtml = snapshot.html;
+              appendDebugLog("Using HTML selection snapshot fallback", {
+                chars: snapshot.html.trim().length,
+                capturedAt: snapshot.capturedAt,
+              });
+            }
+          }
+
           if (selectedHtml.trim()) {
             source = {
               text: selectedHtml,
