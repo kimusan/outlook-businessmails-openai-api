@@ -1124,8 +1124,43 @@ export async function createChatCompletion(
 
   const payloadContent = extractTextFromChatCompletionPayload(payload);
   const streamContent = streamedResult?.content || "";
-  const streamReasoningFallback = streamedResult?.reasoningContent || "";
-  const content = payloadContent || streamContent || streamReasoningFallback;
+  const streamReasoning = streamedResult?.reasoningContent || "";
+  const content = payloadContent || streamContent;
+
+  if (!content && streamReasoning) {
+    throw new AiClientError(
+      "Model returned reasoning/thinking text but no final assistant content. Use a non-reasoning model or adjust model settings to return final content.",
+      {
+        operation: "chatCompletion",
+        url: chatCompletionEndpoint,
+        method: "POST",
+        requestHeaders: requestAttempt.requestHeaders,
+        requestBody: requestAttempt.requestBody,
+        fetchMode: requestAttempt.fetchMode,
+        fetchCredentials: requestAttempt.fetchCredentials,
+        usedLocalProxy: requestAttempt.usedLocalProxy,
+        localProxyUrl: requestAttempt.localProxyUrl,
+        proxyTargetUrl: requestAttempt.proxyTargetUrl,
+        status: response.status,
+        statusText: response.statusText,
+        responseHeaders: requestAttempt.responseHeaders,
+        responseBody: truncateForLog(responseBody, 4000),
+        networkDiagnostics: requestAttempt.networkDiagnostics,
+        requestAttempts,
+        requestPayloadSummary: {
+          model: requestPayload.model,
+          temperature: requestPayload.temperature,
+          messageCount: requestPayload.messages.length,
+          responseContentType,
+          streamDetected: Boolean(streamedResult),
+          streamChunkCount: streamedResult?.chunkCount,
+          streamParsedChunkCount: streamedResult?.parsedChunkCount,
+          streamParseErrorCount: streamedResult?.parseErrorCount,
+          reasoningPreview: truncateForLog(streamReasoning, 240),
+        },
+      }
+    );
+  }
 
   if (!content) {
     throw new AiClientError("AI service returned no message content.", {
