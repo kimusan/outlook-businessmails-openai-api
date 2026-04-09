@@ -228,6 +228,7 @@ export default function App(props: AppProps) {
   const [formality, setFormality] = React.useState<FormalityOption>("balanced");
   const [length, setLength] = React.useState<LengthOption>("medium");
   const [direction, setDirection] = React.useState<string>("");
+  const [selectionOverride, setSelectionOverride] = React.useState<string>("");
   const [targetLanguage, setTargetLanguage] = React.useState<SupportedLanguage>(
     initialConfig.preferredLanguage
   );
@@ -489,6 +490,11 @@ export default function App(props: AppProps) {
     trySelectionFirst: boolean,
     allowBodyFallback = true
   ): Promise<{ text: string; usedSelection: boolean }> => {
+    const itemSupportsSelectedData = (): boolean => {
+      const item = Office?.context?.mailbox?.item as { getSelectedDataAsync?: unknown } | undefined;
+      return Boolean(item && typeof item.getSelectedDataAsync === "function");
+    };
+
     if (trySelectionFirst) {
       const selectedText = await getSelectedTextOrEmpty();
       appendDebugLog("Selection probe", {
@@ -510,7 +516,26 @@ export default function App(props: AppProps) {
         return { text: snapshot.text, usedSelection: true };
       }
 
+      if (selectionOverride.trim()) {
+        appendDebugLog("Using manual selection override", {
+          chars: selectionOverride.trim().length,
+          preview: selectionOverride.trim().slice(0, 120),
+        });
+        return { text: selectionOverride, usedSelection: true };
+      }
+
       if (!allowBodyFallback) {
+        appendDebugLog("Selection unavailable for selection-only action", {
+          hostMode,
+          selectionApiAvailable: itemSupportsSelectedData(),
+        });
+
+        if (hostMode === "read" || !itemSupportsSelectedData()) {
+          throw new Error(
+            "This Outlook mode/client doesn't expose selected text to add-ins. Copy your selection and paste it into Selection override, then run again."
+          );
+        }
+
         throw new Error(
           "No text selection was detected. Select text in the email and run the selection action again."
         );
@@ -1080,9 +1105,19 @@ export default function App(props: AppProps) {
           Configuration status: <b>{isConfigReady ? "Ready" : "Setup required"}</b>
         </p>
         {preferredScope === "selection" && (
-          <p className="taskpane-config-state">
-            Quick action scope: <b>Selection only</b> (operation stops if no selection is detected)
-          </p>
+          <>
+            <p className="taskpane-config-state">
+              Quick action scope: <b>Selection only</b> (operation stops if no selection is detected)
+            </p>
+            <TextField
+              label="Selection override (optional)"
+              multiline
+              rows={3}
+              placeholder="If Outlook can't read selected text, paste the selected lines here."
+              value={selectionOverride}
+              onChange={(_ev, value) => setSelectionOverride(value || "")}
+            />
+          </>
         )}
 
         {isConfigVisible && (
