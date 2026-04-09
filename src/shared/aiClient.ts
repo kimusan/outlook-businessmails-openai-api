@@ -10,8 +10,14 @@ export interface ChatMessage {
 interface ChatCompletionResponse {
   choices?: Array<{
     message?: {
-      content?: string;
+      content?: string | Array<{ type?: string; text?: string } | string>;
     };
+    delta?: {
+      content?: string | Array<{ type?: string; text?: string } | string>;
+      reasoning_content?: string;
+      reasoning?: string;
+    };
+    text?: string;
   }>;
   error?: {
     message?: string;
@@ -128,6 +134,16 @@ interface FetchExecutionContext {
 interface FetchExecutionResult {
   response: ResponseLike;
   context: FetchExecutionContext;
+}
+
+interface StreamedChatCompletionParseResult {
+  content: string;
+  reasoningContent: string;
+  chunkCount: number;
+  parsedChunkCount: number;
+  parseErrorCount: number;
+  hadDoneSentinel: boolean;
+  errorMessage?: string;
 }
 
 type TokenRefreshPayloadMode = "formUrlEncoded" | "json";
@@ -456,6 +472,143 @@ function extractModelId(
   }
 
   return null;
+}
+
+function normalizeChatContent(content: unknown): string {
+  if (typeof content === "string") {
+    return content;
+  }
+
+  if (!Array.isArray(content)) {
+    return "";
+  }
+
+  const parts: string[] = [];
+  content.forEach((item) => {
+    if (typeof item === "string") {
+      parts.push(item);
+      return;
+    }
+
+    if (!item || typeof item !== "object") {
+      return;
+    }
+
+    if (typeof item.text === "string") {
+      parts.push(item.text);
+    }
+  });
+
+  return parts.join("");
+}
+
+function extractTextFromChatCompletionPayload(payload: ChatCompletionResponse | null): string {
+  if (!payload || !Array.isArray(payload.choices)) {
+    return "";
+  }
+
+  const pieces: string[] = [];
+  payload.choices.forEach((choice) => {
+    const messageContent = normalizeChatContent(choice?.message?.content);
+    if (messageContent) {
+      pieces.push(messageContent);
+    }
+
+    const deltaContent = normalizeChatContent(choice?.delta?.content);
+    if (deltaContent) {
+      pieces.push(deltaContent);
+    }
+
+    if (typeof choice?.text === "string" && choice.text) {
+      pieces.push(choice.text);
+    }
+  });
+
+  return pieces.join("");
+}
+
+function parseStreamedChatCompletionBody(
+  responseBody: string
+): StreamedChatCompletionParseResult | null {
+  if (!responseBody || !/^\s*data:/m.test(responseBody)) {
+    return null;
+  }
+
+  const lines = responseBody.split(/\r?\n/);
+  let chunkCount = 0;
+  let parsedChunkCount = 0;
+  let parseErrorCount = 0;
+  let hadDoneSentinel = false;
+  let errorMessage: string | undefined;
+  const contentPieces: string[] = [];
+  const reasoningPieces: string[] = [];
+
+  lines.forEach((line) => {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("data:")) {
+      return;
+    }
+
+    const dataPayload = trimmed.slice(5).trimStart();
+    if (!dataPayload) {
+      return;
+    }
+
+    if (dataPayload === "[DONE]") {
+      hadDoneSentinel = true;
+      return;
+    }
+
+    chunkCount += 1;
+    let parsedChunk: ChatCompletionResponse | null = null;
+    try {
+      parsedChunk = JSON.parse(dataPayload) as ChatCompletionResponse;
+      parsedChunkCount += 1;
+    } catch {
+      parseErrorCount += 1;
+      return;
+    }
+
+    if (!errorMessage && parsedChunk?.error?.message) {
+      errorMessage = parsedChunk.error.message;
+    }
+
+    if (!parsedChunk?.choices || !Array.isArray(parsedChunk.choices)) {
+      return;
+    }
+
+    parsedChunk.choices.forEach((choice) => {
+      const deltaContent = normalizeChatContent(choice?.delta?.content);
+      if (deltaContent) {
+        contentPieces.push(deltaContent);
+      }
+
+      const messageContent = normalizeChatContent(choice?.message?.content);
+      if (messageContent) {
+        contentPieces.push(messageContent);
+      }
+
+      if (typeof choice?.text === "string" && choice.text) {
+        contentPieces.push(choice.text);
+      }
+
+      if (typeof choice?.delta?.reasoning_content === "string" && choice.delta.reasoning_content) {
+        reasoningPieces.push(choice.delta.reasoning_content);
+      } else if (typeof choice?.delta?.reasoning === "string" && choice.delta.reasoning) {
+        reasoningPieces.push(choice.delta.reasoning);
+      }
+    });
+  });
+
+  return {
+    content: contentPieces.join(""),
+    reasoningContent: reasoningPieces.join(""),
+    chunkCount,
+    parsedChunkCount,
+    parseErrorCount,
+    hadDoneSentinel,
+    errorMessage,
+  };
 }
 
 export async function refreshAccessToken(
@@ -879,6 +1032,7 @@ export async function createChatCompletion(
   const requestPayload = {
     model: config.model,
     temperature: config.temperature,
+    stream: false,
     messages,
   };
 
@@ -895,6 +1049,9 @@ export async function createChatCompletion(
   });
 
   const responseBody = await parseResponseBody(response);
+  const responseContentType = requestAttempt.responseHeaders?.["content-type"] || "";
+  const streamedResult = parseStreamedChatCompletionBody(responseBody);
+
   let payload: ChatCompletionResponse | null = null;
   try {
     payload = responseBody ? (JSON.parse(responseBody) as ChatCompletionResponse) : null;
@@ -902,7 +1059,7 @@ export async function createChatCompletion(
     payload = null;
   }
 
-  if (!payload) {
+  if (!payload && !streamedResult) {
     throw new AiClientError("Chat completion response was not valid JSON.", {
       operation: "chatCompletion",
       url: chatCompletionEndpoint,
@@ -924,12 +1081,17 @@ export async function createChatCompletion(
         model: requestPayload.model,
         temperature: requestPayload.temperature,
         messageCount: requestPayload.messages.length,
+        responseContentType,
+        streamDetected: false,
       },
     });
   }
 
   if (!response.ok) {
-    const errorMessage = payload.error?.message || `Request failed with status ${response.status}`;
+    const errorMessage =
+      payload?.error?.message ||
+      streamedResult?.errorMessage ||
+      `Request failed with status ${response.status}`;
     throw new AiClientError(errorMessage, {
       operation: "chatCompletion",
       url: chatCompletionEndpoint,
@@ -951,11 +1113,20 @@ export async function createChatCompletion(
         model: requestPayload.model,
         temperature: requestPayload.temperature,
         messageCount: requestPayload.messages.length,
+        responseContentType,
+        streamDetected: Boolean(streamedResult),
+        streamChunkCount: streamedResult?.chunkCount,
+        streamParsedChunkCount: streamedResult?.parsedChunkCount,
+        streamParseErrorCount: streamedResult?.parseErrorCount,
       },
     });
   }
 
-  const content = payload.choices?.[0]?.message?.content;
+  const payloadContent = extractTextFromChatCompletionPayload(payload);
+  const streamContent = streamedResult?.content || "";
+  const streamReasoningFallback = streamedResult?.reasoningContent || "";
+  const content = payloadContent || streamContent || streamReasoningFallback;
+
   if (!content) {
     throw new AiClientError("AI service returned no message content.", {
       operation: "chatCompletion",
@@ -978,6 +1149,11 @@ export async function createChatCompletion(
         model: requestPayload.model,
         temperature: requestPayload.temperature,
         messageCount: requestPayload.messages.length,
+        responseContentType,
+        streamDetected: Boolean(streamedResult),
+        streamChunkCount: streamedResult?.chunkCount,
+        streamParsedChunkCount: streamedResult?.parsedChunkCount,
+        streamParseErrorCount: streamedResult?.parseErrorCount,
       },
     });
   }
