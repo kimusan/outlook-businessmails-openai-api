@@ -525,13 +525,23 @@ export default function App(props: AppProps) {
       })?.officeTheme;
       const nextMode = detectUiTheme(officeTheme?.bodyBackgroundColor);
       setUiTheme(nextMode);
-      setOfficeThemeVars({
-        "--app-bg": officeTheme?.bodyBackgroundColor || "",
-        "--app-surface": officeTheme?.controlBackgroundColor || "",
-        "--app-text": officeTheme?.bodyForegroundColor || "",
-        "--app-muted": officeTheme?.disabledTextColor || "",
-        "--app-accent": officeTheme?.controlForegroundColor || "",
-      });
+      const nextVars: Record<string, string> = {};
+      if (officeTheme?.bodyBackgroundColor) {
+        nextVars["--app-bg"] = officeTheme.bodyBackgroundColor;
+      }
+      if (officeTheme?.controlBackgroundColor) {
+        nextVars["--app-surface"] = officeTheme.controlBackgroundColor;
+      }
+      if (officeTheme?.bodyForegroundColor) {
+        nextVars["--app-text"] = officeTheme.bodyForegroundColor;
+      }
+      if (officeTheme?.disabledTextColor) {
+        nextVars["--app-muted"] = officeTheme.disabledTextColor;
+      }
+      if (officeTheme?.controlForegroundColor) {
+        nextVars["--app-accent"] = officeTheme.controlForegroundColor;
+      }
+      setOfficeThemeVars(nextVars);
     };
 
     applyTheme();
@@ -1329,9 +1339,17 @@ export default function App(props: AppProps) {
     <div className={`ms-welcome theme-${uiTheme}`} style={officeThemeVars as React.CSSProperties}>
       <main className="ms-welcome__main">
         <div className="taskpane-topbar">
-          <div className="taskpane-top-actions">
+          <div className="taskpane-icon-row">
             {!isConfigReady && <span className="taskpane-pill taskpane-pill-warning">Configuration missing</span>}
             <DefaultButton
+              className="taskpane-icon-button"
+              iconProps={{ iconName: "Bug" }}
+              title={isDebugVisible ? "Hide debug panel" : "Show debug panel"}
+              ariaLabel={isDebugVisible ? "Hide debug panel" : "Show debug panel"}
+              onClick={() => setIsDebugVisible(!isDebugVisible)}
+            />
+            <DefaultButton
+              className="taskpane-icon-button"
               iconProps={{ iconName: "Settings" }}
               title={isConfigVisible ? "Close configuration" : "Open configuration"}
               ariaLabel={isConfigVisible ? "Close configuration" : "Open configuration"}
@@ -1656,13 +1674,6 @@ export default function App(props: AppProps) {
           </div>
         </div>
       </main>
-
-      <DefaultButton
-        className="taskpane-debug-fab"
-        iconProps={{ iconName: "Bug" }}
-        title={isDebugVisible ? "Hide debug panel" : "Show debug panel"}
-        onClick={() => setIsDebugVisible(!isDebugVisible)}
-      />
       {isDebugVisible && (
         <div className="taskpane-debug-panel">
           <div className="taskpane-heading-row">
