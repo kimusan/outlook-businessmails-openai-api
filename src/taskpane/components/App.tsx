@@ -1329,15 +1329,14 @@ export default function App(props: AppProps) {
     <div className={`ms-welcome theme-${uiTheme}`} style={officeThemeVars as React.CSSProperties}>
       <main className="ms-welcome__main">
         <div className="taskpane-topbar">
-          <h2 className="taskpane-title">Outlook AI Assistant</h2>
           <div className="taskpane-top-actions">
             {!isConfigReady && <span className="taskpane-pill taskpane-pill-warning">Configuration missing</span>}
             <DefaultButton
               iconProps={{ iconName: "Settings" }}
+              title={isConfigVisible ? "Close configuration" : "Open configuration"}
+              ariaLabel={isConfigVisible ? "Close configuration" : "Open configuration"}
               onClick={() => setIsConfigVisible(!isConfigVisible)}
-            >
-              {isConfigVisible ? "Close" : "Configuration"}
-            </DefaultButton>
+            />
           </div>
         </div>
 
@@ -1511,6 +1510,12 @@ export default function App(props: AppProps) {
                 iconProps={{ iconName: definition.iconName }}
                 title={definition.label}
                 onClick={() => {
+                  if (definition.key === "translate" && workflow !== "translate") {
+                    setWorkflow("translate");
+                    setStatus("Select target language, then press Translate again to run.");
+                    return;
+                  }
+
                   void onRunWorkflow(definition.key);
                 }}
                 disabled={isLoading || !isConfigReady}
@@ -1519,7 +1524,9 @@ export default function App(props: AppProps) {
               </DefaultButton>
             ))}
           </div>
-          <p className="taskpane-config-state">Tap a workflow button to run with the options below.</p>
+          <p className="taskpane-config-state">
+            Tap a workflow button to run. Translation uses a two-step flow to let you choose language first.
+          </p>
         </div>
 
         <div className="taskpane-section">
@@ -1614,16 +1621,6 @@ export default function App(props: AppProps) {
                   </span>
                 </button>
               ))}
-            </div>
-          )}
-          {activePayload && (
-            <div className="taskpane-markup-preview">
-              <div
-                className="taskpane-markup"
-                dangerouslySetInnerHTML={{
-                  __html: formatStructuredTextAsHtml(activePayload.text),
-                }}
-              />
             </div>
           )}
           {hostMode === "compose" && activePayload && (

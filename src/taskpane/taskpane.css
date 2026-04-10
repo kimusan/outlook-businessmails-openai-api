@@ -7,6 +7,10 @@ body {
   font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
 }
 
+#container {
+  height: 100%;
+}
+
 :root {
   --app-bg: #f4f6fa;
   --app-surface: #ffffff;
@@ -21,6 +25,7 @@ body {
 
 .ms-welcome {
   min-height: 100%;
+  height: 100%;
   background: var(--app-bg);
   color: var(--app-text);
 }
@@ -47,15 +52,8 @@ body {
 .taskpane-topbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 10px;
-}
-
-.taskpane-title {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
 }
 
 .taskpane-top-actions {
@@ -138,9 +136,19 @@ body {
   background: var(--app-surface);
 }
 
+.workflow-button .ms-Button-label,
+.workflow-button .ms-Button-icon {
+  color: var(--app-text) !important;
+}
+
 .workflow-button.is-active {
   border-color: var(--app-accent);
   background: var(--app-accent-soft);
+}
+
+.workflow-button.is-active .ms-Button-label,
+.workflow-button.is-active .ms-Button-icon {
+  color: var(--app-accent) !important;
 }
 
 .history-list {
