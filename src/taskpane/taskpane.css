@@ -98,6 +98,26 @@ body {
   color: #ffd98a;
 }
 
+.theme-dark .ms-Label,
+.theme-dark .ms-Dropdown-label,
+.theme-dark .ms-TextField .ms-Label,
+.theme-dark .ms-Checkbox-text {
+  color: var(--app-text) !important;
+}
+
+.theme-dark .ms-Dropdown-title,
+.theme-dark .ms-TextField-field,
+.theme-dark .ms-SpinButton-wrapper {
+  color: var(--app-text) !important;
+  background: var(--app-surface) !important;
+}
+
+.theme-dark .ms-Dropdown-caretDown,
+.theme-dark .ms-SpinButton-decrementButton,
+.theme-dark .ms-SpinButton-incrementButton {
+  color: var(--app-text) !important;
+}
+
 .taskpane-heading-row {
   display: flex;
   align-items: center;
