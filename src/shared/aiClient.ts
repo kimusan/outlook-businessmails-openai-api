@@ -25,12 +25,24 @@ interface ChatCompletionResponse {
 }
 
 interface ModelListResponse {
-  models?: Array<string | { id?: string; name?: string; model?: string }>;
-  data?: Array<string | { id?: string; name?: string; model?: string }>;
-  model_list?: Array<string | { id?: string; name?: string; model?: string }>;
+  models?: Array<string | ModelListItem>;
+  data?: Array<string | ModelListItem>;
+  model_list?: Array<string | ModelListItem>;
   error?: {
     message?: string;
   };
+}
+
+interface ModelListItem {
+  id?: string;
+  name?: string;
+  model?: string;
+  capabilities?: unknown;
+  tooling?: unknown;
+  tools?: unknown;
+  modalities?: unknown;
+  features?: unknown;
+  [key: string]: unknown;
 }
 
 interface TokenRefreshResponse {
@@ -102,6 +114,12 @@ interface FetchWithAuthResult {
   requestAttempts: RequestAttemptDebug[];
 }
 
+interface AbortSignalLike {
+  aborted: boolean;
+  addEventListener?: (type: string, listener: (...args: unknown[]) => void) => void;
+  removeEventListener?: (type: string, listener: (...args: unknown[]) => void) => void;
+}
+
 interface NetworkDiagnostics {
   pageOrigin?: string;
   targetOrigin?: string;
@@ -136,6 +154,12 @@ interface FetchExecutionResult {
   context: FetchExecutionContext;
 }
 
+export interface AvailableModel {
+  id: string;
+  capabilities: string[];
+  displayLabel: string;
+}
+
 interface StreamedChatCompletionParseResult {
   content: string;
   reasoningContent: string;
@@ -154,7 +178,9 @@ export type ChatCompletionProgressStage =
   | "streamDetected"
   | "reasoningOnlyDetected"
   | "reasoningFollowUpStarted"
-  | "reasoningFollowUpCompleted";
+  | "reasoningFollowUpCompleted"
+  | "finalAnswerCleanupStarted"
+  | "finalAnswerCleanupCompleted";
 
 export interface ChatCompletionProgressEvent {
   stage: ChatCompletionProgressStage;
@@ -164,6 +190,8 @@ export interface ChatCompletionProgressEvent {
 export interface CreateChatCompletionOptions {
   onProgress?: (event: ChatCompletionProgressEvent) => void;
   allowReasoningFollowUp?: boolean;
+  allowFinalAnswerCleanup?: boolean;
+  signal?: AbortSignalLike;
 }
 
 const accessTokenCache = new Map<string, string>();
@@ -351,6 +379,7 @@ async function executeBrowserFetch(
     method: "GET" | "POST";
     headers: Record<string, string>;
     body?: string;
+    signal?: AbortSignalLike;
   }
 ): Promise<FetchExecutionResult> {
   const directFetchMode = "cors" as const;
@@ -361,6 +390,7 @@ async function executeBrowserFetch(
       method: init.method,
       headers: init.headers,
       body: init.body,
+      signal: init.signal as any,
       mode: directFetchMode,
       credentials: directCredentials,
     });
@@ -392,6 +422,7 @@ async function executeBrowserFetch(
       Accept: "application/json",
     },
     body: JSON.stringify(proxyRequest),
+    signal: init.signal as any,
     mode: proxyFetchMode,
     credentials: proxyCredentials,
   });
@@ -470,9 +501,18 @@ function shouldRetryTokenRefreshWithJson(
   return hint || status === 422;
 }
 
-function extractModelId(
-  item: string | { id?: string; name?: string; model?: string }
-): string | null {
+function isAbortError(error: unknown): boolean {
+  const candidate = error as { name?: string; message?: string } | null;
+  if (!candidate) {
+    return false;
+  }
+
+  const name = (candidate.name || "").toLowerCase();
+  const message = (candidate.message || "").toLowerCase();
+  return name === "aborterror" || message.includes("aborted") || message.includes("canceled");
+}
+
+function extractModelId(item: string | ModelListItem): string | null {
   if (typeof item === "string") {
     return item.trim() || null;
   }
@@ -490,6 +530,116 @@ function extractModelId(
   }
 
   return null;
+}
+
+function extractCapabilityValues(value: unknown): string[] {
+  if (!value) {
+    return [];
+  }
+
+  if (typeof value === "string") {
+    return value
+      .split(/[,\s]+/)
+      .map((part) => part.trim().toLowerCase())
+      .filter(Boolean);
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .flatMap((entry) => extractCapabilityValues(entry))
+      .map((part) => part.toLowerCase())
+      .filter(Boolean);
+  }
+
+  if (typeof value === "object") {
+    return Object.entries(value as Record<string, unknown>)
+      .filter(([, flag]) => flag === true || flag === "true" || flag === 1)
+      .map(([key]) => key.trim().toLowerCase())
+      .filter(Boolean);
+  }
+
+  return [];
+}
+
+function extractModelCapabilities(item: string | ModelListItem): string[] {
+  if (typeof item === "string") {
+    return [];
+  }
+
+  const capabilities = [
+    ...extractCapabilityValues(item.capabilities),
+    ...extractCapabilityValues(item.tooling),
+    ...extractCapabilityValues(item.tools),
+    ...extractCapabilityValues(item.modalities),
+    ...extractCapabilityValues(item.features),
+  ]
+    .map((capability) => capability.replace(/[_-]+/g, " ").trim())
+    .filter(Boolean);
+
+  return capabilities.filter((value, index, array) => array.indexOf(value) === index);
+}
+
+function buildModelDisplayLabel(id: string, capabilities: string[]): string {
+  if (capabilities.length === 0) {
+    return id;
+  }
+
+  const shown = capabilities.slice(0, 4);
+  const suffix = capabilities.length > shown.length ? ", ..." : "";
+  return `${id} (${shown.join(", ")}${suffix})`;
+}
+
+function contentLooksLikePlanning(content: string): boolean {
+  const normalized = content.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  const planningPatterns = [
+    /^analy[sz]e\b/,
+    /^plan\b/,
+    /^i (will|can|am going to)\b/,
+    /^let'?s\b/,
+    /^here(?:'| i)s (my|the) plan\b/,
+    /^first,?\s/i,
+    /^step\s+\d+/,
+  ];
+
+  return planningPatterns.some((pattern) => pattern.test(normalized));
+}
+
+function stripThinkingBlocks(content: string): string {
+  let output = content;
+
+  output = output.replace(/<think\b[^>]*>[\s\S]*?<\/think>/gi, "");
+  output = output.replace(/```(?:thinking|reasoning|analysis)[\s\S]*?```/gi, "");
+
+  return output.trim();
+}
+
+function stripPlanningPreamble(content: string): string {
+  const planningLinePatterns = [
+    /^analy[sz]e\b/i,
+    /^plan\b/i,
+    /^i (will|can|am going to)\b/i,
+    /^let'?s\b/i,
+    /^here(?:'| i)s (my|the) plan\b/i,
+    /^first,?\s/i,
+    /^step\s+\d+\b/i,
+  ];
+
+  const strippedThinking = stripThinkingBlocks(content);
+  const lines = strippedThinking.split(/\r?\n/);
+  let startIndex = 0;
+
+  while (
+    startIndex < lines.length &&
+    planningLinePatterns.some((pattern) => pattern.test(lines[startIndex].trim()))
+  ) {
+    startIndex += 1;
+  }
+
+  return lines.slice(startIndex).join("\n").trim();
 }
 
 function normalizeChatContent(content: unknown): string {
@@ -583,6 +733,28 @@ function buildReasoningFollowUpMessages(
   };
 
   return [finalizeSystemMessage, finalizeUserMessage];
+}
+
+function buildFinalAnswerCleanupMessages(
+  originalMessages: ChatMessage[],
+  draftContent: string
+): ChatMessage[] {
+  const systemMessage: ChatMessage = {
+    role: "system",
+    content:
+      "You clean assistant drafts. Return only the final user-facing output. Remove planning text, analysis notes, and preambles. Keep links/formatting where relevant.",
+  };
+  const userMessage: ChatMessage = {
+    role: "user",
+    content:
+      "Original request context:\n" +
+      originalMessages.map((message) => `[${message.role}] ${message.content}`).join("\n\n") +
+      "\n\nDraft output to clean:\n" +
+      draftContent +
+      "\n\nReturn final answer only.",
+  };
+
+  return [systemMessage, userMessage];
 }
 
 function parseStreamedChatCompletionBody(
@@ -905,7 +1077,8 @@ export async function refreshAccessToken(
 
 async function fetchWithAuth(
   config: AiServiceConfig,
-  request: AuthorizedRequest
+  request: AuthorizedRequest,
+  signal?: AbortSignalLike
 ): Promise<FetchWithAuthResult> {
   const requestAttempts: RequestAttemptDebug[] = [];
 
@@ -938,6 +1111,7 @@ async function fetchWithAuth(
         method: request.method,
         headers: requestHeaders,
         body: request.body,
+        signal,
       });
       const response = execution.response;
       fetchContext = execution.context;
@@ -958,6 +1132,25 @@ async function fetchWithAuth(
       };
     } catch (error) {
       attempt.networkError = (error as Error).message;
+      if (isAbortError(error)) {
+        throw new AiClientError("Request cancelled by user.", {
+          operation: request.operation,
+          url: request.url,
+          method: request.method,
+          requestHeaders,
+          requestBody: request.body,
+          fetchMode: fetchContext.fetchMode,
+          fetchCredentials: fetchContext.fetchCredentials,
+          usedLocalProxy: fetchContext.usedLocalProxy,
+          localProxyUrl: fetchContext.localProxyUrl,
+          proxyTargetUrl: fetchContext.proxyTargetUrl,
+          networkDiagnostics,
+          requestAttempts,
+          requestPayloadSummary: request.requestPayloadSummary,
+          underlyingError: (error as Error).message,
+        });
+      }
+
       throw new AiClientError(`${request.operation} request failed before receiving a response.`, {
         operation: request.operation,
         url: request.url,
@@ -990,13 +1183,17 @@ async function fetchWithAuth(
   return execution;
 }
 
-export async function listAvailableModels(config: AiServiceConfig): Promise<string[]> {
+export async function listAvailableModels(config: AiServiceConfig): Promise<AvailableModel[]> {
   const modelListEndpoint = getModelListEndpoint(config);
-  const { response, requestAttempt, requestAttempts } = await fetchWithAuth(config, {
-    operation: "modelList",
-    url: modelListEndpoint,
-    method: "GET",
-  });
+  const { response, requestAttempt, requestAttempts } = await fetchWithAuth(
+    config,
+    {
+      operation: "modelList",
+      url: modelListEndpoint,
+      method: "GET",
+    },
+    undefined
+  );
 
   const responseBody = await parseResponseBody(response);
   let payload: ModelListResponse | null = null;
@@ -1052,11 +1249,34 @@ export async function listAvailableModels(config: AiServiceConfig): Promise<stri
   }
 
   const rawModels = payload.models || payload.model_list || payload.data || [];
-  const result = rawModels
-    .map((item) => extractModelId(item))
-    .filter((item): item is string => Boolean(item))
-    .filter((item, index, array) => array.indexOf(item) === index)
-    .sort();
+  const modelMap = new Map<string, AvailableModel>();
+  rawModels.forEach((item) => {
+    const id = extractModelId(item);
+    if (!id) {
+      return;
+    }
+
+    const capabilities = extractModelCapabilities(item);
+    const existing = modelMap.get(id);
+    if (!existing) {
+      modelMap.set(id, {
+        id,
+        capabilities,
+        displayLabel: buildModelDisplayLabel(id, capabilities),
+      });
+      return;
+    }
+
+    const mergedCapabilities = [...existing.capabilities, ...capabilities].filter(
+      (value, index, array) => array.indexOf(value) === index
+    );
+    modelMap.set(id, {
+      id,
+      capabilities: mergedCapabilities,
+      displayLabel: buildModelDisplayLabel(id, mergedCapabilities),
+    });
+  });
+  const result = Array.from(modelMap.values()).sort((a, b) => a.id.localeCompare(b.id));
 
   if (result.length === 0) {
     throw new AiClientError("Model list response contained no usable model identifiers.", {
@@ -1100,17 +1320,21 @@ export async function createChatCompletion(
     messageCount: requestPayload.messages.length,
   });
 
-  const { response, requestAttempt, requestAttempts } = await fetchWithAuth(config, {
-    operation: "chatCompletion",
-    url: chatCompletionEndpoint,
-    method: "POST",
-    body: JSON.stringify(requestPayload),
-    requestPayloadSummary: {
-      model: requestPayload.model,
-      temperature: requestPayload.temperature,
-      messageCount: requestPayload.messages.length,
+  const { response, requestAttempt, requestAttempts } = await fetchWithAuth(
+    config,
+    {
+      operation: "chatCompletion",
+      url: chatCompletionEndpoint,
+      method: "POST",
+      body: JSON.stringify(requestPayload),
+      requestPayloadSummary: {
+        model: requestPayload.model,
+        temperature: requestPayload.temperature,
+        messageCount: requestPayload.messages.length,
+      },
     },
-  });
+    options?.signal
+  );
 
   const responseBody = await parseResponseBody(response);
   const responseContentType = requestAttempt.responseHeaders?.["content-type"] || "";
@@ -1218,6 +1442,7 @@ export async function createChatCompletion(
         const followUpResult = await createChatCompletion(config, followUpMessages, {
           ...options,
           allowReasoningFollowUp: false,
+          allowFinalAnswerCleanup: false,
         });
         emitChatProgress(options, "reasoningFollowUpCompleted", {
           outputLength: followUpResult.trim().length,
@@ -1325,6 +1550,32 @@ export async function createChatCompletion(
         streamParseErrorCount: streamedResult?.parseErrorCount,
       },
     });
+  }
+
+  if (content && options?.allowFinalAnswerCleanup !== false && contentLooksLikePlanning(content)) {
+    const locallyCleaned = stripPlanningPreamble(content);
+    if (locallyCleaned && !contentLooksLikePlanning(locallyCleaned)) {
+      return locallyCleaned;
+    }
+
+    emitChatProgress(options, "finalAnswerCleanupStarted", {
+      contentPreview: truncateForLog(content, 160),
+    });
+
+    const cleanupMessages = buildFinalAnswerCleanupMessages(messages, content);
+    const cleaned = await createChatCompletion(config, cleanupMessages, {
+      ...options,
+      allowReasoningFollowUp: false,
+      allowFinalAnswerCleanup: false,
+    });
+
+    emitChatProgress(options, "finalAnswerCleanupCompleted", {
+      outputLength: cleaned.trim().length,
+    });
+
+    if (cleaned.trim()) {
+      return cleaned.trim();
+    }
   }
 
   return content.trim();

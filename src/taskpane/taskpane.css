@@ -176,6 +176,19 @@ body {
   color: var(--app-text) !important;
 }
 
+.workflow-button:hover,
+.workflow-button:focus-visible {
+  border-color: var(--app-accent);
+  background: var(--app-accent-soft);
+}
+
+.workflow-button:hover .ms-Button-label,
+.workflow-button:hover .ms-Button-icon,
+.workflow-button:focus-visible .ms-Button-label,
+.workflow-button:focus-visible .ms-Button-icon {
+  color: var(--app-text) !important;
+}
+
 .workflow-button.is-active {
   border-color: var(--app-accent);
   background: var(--app-accent-soft);
@@ -183,6 +196,13 @@ body {
 
 .workflow-button.is-active .ms-Button-label,
 .workflow-button.is-active .ms-Button-icon {
+  color: var(--app-accent) !important;
+}
+
+.workflow-button.is-active:hover .ms-Button-label,
+.workflow-button.is-active:hover .ms-Button-icon,
+.workflow-button.is-active:focus-visible .ms-Button-label,
+.workflow-button.is-active:focus-visible .ms-Button-icon {
   color: var(--app-accent) !important;
 }
 
@@ -307,6 +327,19 @@ body {
   box-shadow: var(--app-shadow);
   padding: 10px;
   z-index: 24;
+}
+
+.theme-dark .ms-Callout .ms-Dropdown-item,
+.theme-dark .ms-Callout .ms-Dropdown-itemText,
+.theme-dark .ms-Dropdown-item,
+.theme-dark .ms-Dropdown-itemText {
+  color: var(--app-text) !important;
+  background: var(--app-surface) !important;
+}
+
+.theme-dark .ms-Callout .ms-Dropdown-item:hover,
+.theme-dark .ms-Dropdown-item:hover {
+  background: var(--app-accent-soft) !important;
 }
 
 .ms-welcome__progress {

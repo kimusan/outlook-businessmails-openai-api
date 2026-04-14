@@ -53,6 +53,7 @@ import {
   validateAiServiceConfig,
 } from "../../shared/aiConfig";
 import {
+  AvailableModel,
   createChatCompletion,
   getChatCompletionEndpoint,
   getModelListEndpoint,
@@ -188,6 +189,51 @@ function saveResultHistoryByItem(historyByItem: Record<string, ResultHistoryEntr
   } catch {
     // Ignore history persistence failures.
   }
+}
+
+function optimizeSourceForLatency(input: string): { text: string; changed: boolean; reason: string[] } {
+  const reasons: string[] = [];
+  let output = (input || "").replace(/\r\n/g, "\n");
+
+  const lower = output.toLowerCase();
+  const boilerplateMarkers = [
+    "confidentiality notice",
+    "the information contained in this e-mail message",
+    "any unauthorized use or disclosure is strictly prohibited",
+    "if you are not the intended recipient",
+    "external email : please do not click links",
+  ];
+
+  let cutIndex = -1;
+  boilerplateMarkers.forEach((marker) => {
+    const index = lower.indexOf(marker);
+    if (index > 800 && (cutIndex < 0 || index < cutIndex)) {
+      cutIndex = index;
+    }
+  });
+
+  if (cutIndex > 0) {
+    output = output.slice(0, cutIndex).trimEnd();
+    reasons.push("boilerplate-trimmed");
+  }
+
+  const compacted = output.replace(/\n{3,}/g, "\n\n").trim();
+  if (compacted !== output) {
+    output = compacted;
+    reasons.push("whitespace-compacted");
+  }
+
+  const maxChars = 18000;
+  if (output.length > maxChars) {
+    output = `${output.slice(0, maxChars)}\n\n[Context trimmed for latency]`;
+    reasons.push("context-capped");
+  }
+
+  return {
+    text: output,
+    changed: reasons.length > 0,
+    reason: reasons,
+  };
 }
 
 const toneOptions: IDropdownOption[] = [
@@ -331,7 +377,7 @@ export default function App(props: AppProps) {
   const [isConfigVisible, setIsConfigVisible] = React.useState<boolean>(
     () => validateAiServiceConfig(initialConfig) !== null
   );
-  const [availableModels, setAvailableModels] = React.useState<string[]>([]);
+  const [availableModels, setAvailableModels] = React.useState<AvailableModel[]>([]);
   const [isLoadingModels, setIsLoadingModels] = React.useState<boolean>(false);
   const [modelListError, setModelListError] = React.useState<string>("");
   const [modelListInfo, setModelListInfo] = React.useState<string>("");
@@ -358,12 +404,14 @@ export default function App(props: AppProps) {
   const [isLoading, setIsLoading] = React.useState<boolean>(false);
   const [isSavingConfig, setIsSavingConfig] = React.useState<boolean>(false);
   const [isCheckingApi, setIsCheckingApi] = React.useState<boolean>(false);
+  const [hasActiveRequest, setHasActiveRequest] = React.useState<boolean>(false);
   const [chatQuestion, setChatQuestion] = React.useState<string>("");
   const [chatResponse, setChatResponse] = React.useState<string>("");
   const [isChatLoading, setIsChatLoading] = React.useState<boolean>(false);
   const hasInitializedAutoSaveRef = React.useRef<boolean>(false);
   const selectionSnapshotRef = React.useRef<SelectionSnapshot | null>(null);
   const dialogRef = React.useRef<Office.Dialog | null>(null);
+  const activeRequestControllerRef = React.useRef<AbortController | null>(null);
   const isConfigReady = validateAiServiceConfig(config) === null;
 
   const chatCompletionsEndpointPreview = React.useMemo(() => {
@@ -643,6 +691,22 @@ export default function App(props: AppProps) {
     appendDebugLog(`${context}: non-error thrown`, { value: String(error) });
   };
 
+  const isCancelledError = (error: unknown): boolean => {
+    if (!error) {
+      return false;
+    }
+
+    const candidate = error as { name?: string; message?: string };
+    const name = (candidate.name || "").toLowerCase();
+    const message = (candidate.message || "").toLowerCase();
+    return (
+      name === "aborterror" ||
+      message.includes("cancel") ||
+      message.includes("aborted") ||
+      message.includes("request cancelled by user")
+    );
+  };
+
   const runAi = async (messages: { role: "system" | "user" | "assistant"; content: string }[]) => {
     const validationError = validateAiServiceConfig(config);
     if (validationError) {
@@ -650,41 +714,79 @@ export default function App(props: AppProps) {
       throw new Error(validationError);
     }
 
-    return createChatCompletion(config, messages, {
-      onProgress: (event) => {
-        if (event.stage === "requestStarted") {
-          setStatusText("Contacting AI service...");
-          return;
-        }
+    if (activeRequestControllerRef.current) {
+      activeRequestControllerRef.current.abort();
+    }
 
-        if (event.stage === "responseReceived") {
-          setStatusText("AI response received. Processing output...");
-          return;
-        }
+    const controller = new AbortController();
+    activeRequestControllerRef.current = controller;
+    setHasActiveRequest(true);
 
-        if (event.stage === "streamDetected") {
-          setStatusText("Streaming response detected. Building final output...");
-          return;
-        }
+    try {
+      return await createChatCompletion(config, messages, {
+        signal: controller.signal,
+        onProgress: (event) => {
+          if (event.stage === "requestStarted") {
+            setStatusText("Contacting AI service...");
+            return;
+          }
 
-        if (event.stage === "reasoningOnlyDetected") {
-          appendDebugLog("Reasoning-only stream detected", event.detail);
-          setStatusText("Reasoning output detected. Requesting final answer...");
-          return;
-        }
+          if (event.stage === "responseReceived") {
+            setStatusText("AI response received. Processing output...");
+            return;
+          }
 
-        if (event.stage === "reasoningFollowUpStarted") {
-          appendDebugLog("Starting reasoning follow-up pass", event.detail);
-          setStatusText("Generating final answer from reasoning output...");
-          return;
-        }
+          if (event.stage === "streamDetected") {
+            setStatusText("Streaming response detected. Building final output...");
+            return;
+          }
 
-        if (event.stage === "reasoningFollowUpCompleted") {
-          appendDebugLog("Reasoning follow-up pass completed", event.detail);
-          setStatusText("Final answer ready.");
-        }
-      },
-    });
+          if (event.stage === "reasoningOnlyDetected") {
+            appendDebugLog("Reasoning-only stream detected", event.detail);
+            setStatusText("Reasoning output detected. Requesting final answer...");
+            return;
+          }
+
+          if (event.stage === "reasoningFollowUpStarted") {
+            appendDebugLog("Starting reasoning follow-up pass", event.detail);
+            setStatusText("Generating final answer from reasoning output...");
+            return;
+          }
+
+          if (event.stage === "reasoningFollowUpCompleted") {
+            appendDebugLog("Reasoning follow-up pass completed", event.detail);
+            setStatusText("Final answer ready.");
+            return;
+          }
+
+          if (event.stage === "finalAnswerCleanupStarted") {
+            appendDebugLog("Cleaning planning text from thinking-model response", event.detail);
+            setStatusText("Cleaning intermediate planning text...");
+            return;
+          }
+
+          if (event.stage === "finalAnswerCleanupCompleted") {
+            appendDebugLog("Planning-text cleanup completed", event.detail);
+            setStatusText("Final answer ready.");
+          }
+        },
+      });
+    } finally {
+      if (activeRequestControllerRef.current === controller) {
+        activeRequestControllerRef.current = null;
+      }
+      setHasActiveRequest(false);
+    }
+  };
+
+  const onCancelActiveRequest = () => {
+    if (!activeRequestControllerRef.current) {
+      return;
+    }
+
+    activeRequestControllerRef.current.abort();
+    appendDebugLog("User cancelled active AI request.");
+    setStatus("Cancelling request...");
   };
 
   const captureSelectionSnapshot = React.useCallback(
@@ -1079,9 +1181,18 @@ export default function App(props: AppProps) {
           throw new Error("Could not find a thread context to reply to.");
         }
 
+        const optimizedThread = optimizeSourceForLatency(threadText);
+        if (optimizedThread.changed) {
+          appendDebugLog("Context optimized for latency (reply draft)", {
+            reasons: optimizedThread.reason,
+            originalChars: threadText.length,
+            optimizedChars: optimizedThread.text.length,
+          });
+        }
+
         const output = await runAi(
           buildReplyDraftMessages(
-            threadText,
+            optimizedThread.text,
             direction.trim(),
             tone,
             formality,
@@ -1107,8 +1218,23 @@ export default function App(props: AppProps) {
           throw new Error("No draft text found to improve.");
         }
 
+        const optimizedDraft = optimizeSourceForLatency(sourceText);
+        if (optimizedDraft.changed) {
+          appendDebugLog("Context optimized for latency (improve draft)", {
+            reasons: optimizedDraft.reason,
+            originalChars: sourceText.length,
+            optimizedChars: optimizedDraft.text.length,
+          });
+        }
+
         const output = await runAi(
-          buildImproveDraftMessages(sourceText, tone, formality, length, config.promptTemplates)
+          buildImproveDraftMessages(
+            optimizedDraft.text,
+            tone,
+            formality,
+            length,
+            config.promptTemplates
+          )
         );
         await presentResult(
           createDialogPayload(
@@ -1137,10 +1263,23 @@ export default function App(props: AppProps) {
           throw new Error("Could not detect referenced thread text for reply optimization.");
         }
 
+        const optimizedDraft = optimizeSourceForLatency(draftText);
+        const optimizedThread = optimizeSourceForLatency(threadText);
+        if (optimizedDraft.changed || optimizedThread.changed) {
+          appendDebugLog("Context optimized for latency (improve reply)", {
+            draftReasons: optimizedDraft.reason,
+            threadReasons: optimizedThread.reason,
+            originalDraftChars: draftText.length,
+            optimizedDraftChars: optimizedDraft.text.length,
+            originalThreadChars: threadText.length,
+            optimizedThreadChars: optimizedThread.text.length,
+          });
+        }
+
         const output = await runAi(
           buildImproveReplyMessages(
-            draftText,
-            threadText,
+            optimizedDraft.text,
+            optimizedThread.text,
             tone,
             formality,
             length,
@@ -1164,8 +1303,21 @@ export default function App(props: AppProps) {
           throw new Error("No email content found to summarize.");
         }
 
+        const optimizedSummarySource = optimizeSourceForLatency(source.text);
+        if (optimizedSummarySource.changed) {
+          appendDebugLog("Context optimized for latency (summary)", {
+            reasons: optimizedSummarySource.reason,
+            originalChars: source.text.length,
+            optimizedChars: optimizedSummarySource.text.length,
+          });
+        }
+
         const output = await runAi(
-          buildSummaryMessages(source.text, config.preferredLanguage, config.promptTemplates)
+          buildSummaryMessages(
+            optimizedSummarySource.text,
+            config.preferredLanguage,
+            config.promptTemplates
+          )
         );
         await presentResult(
           createDialogPayload(
@@ -1230,8 +1382,21 @@ export default function App(props: AppProps) {
           throw new Error("No email content found to translate.");
         }
 
+        const optimizedTranslationSource = optimizeSourceForLatency(source.text);
+        if (optimizedTranslationSource.changed) {
+          appendDebugLog("Context optimized for latency (translation)", {
+            reasons: optimizedTranslationSource.reason,
+            originalChars: source.text.length,
+            optimizedChars: optimizedTranslationSource.text.length,
+          });
+        }
+
         const output = await runAi(
-          buildTranslationMessages(source.text, targetLanguage, config.promptTemplates)
+          buildTranslationMessages(
+            optimizedTranslationSource.text,
+            targetLanguage,
+            config.promptTemplates
+          )
         );
         await presentResult(
           createDialogPayload(
@@ -1249,6 +1414,11 @@ export default function App(props: AppProps) {
         );
       }
     } catch (error) {
+      if (isCancelledError(error)) {
+        setStatus("Request cancelled.");
+        return;
+      }
+
       logError(`Workflow ${activeWorkflow} failed`, error);
       setError((error as Error).message);
     } finally {
@@ -1328,6 +1498,11 @@ export default function App(props: AppProps) {
       setChatResponse(output);
       setStatus(source.usedSelection ? "Chat response ready (selection context)." : "Chat response ready.");
     } catch (error) {
+      if (isCancelledError(error)) {
+        setStatus("Request cancelled.");
+        return;
+      }
+
       logError("Chat failed", error);
       setError((error as Error).message);
     } finally {
@@ -1470,9 +1645,20 @@ export default function App(props: AppProps) {
             {availableModels.length > 0 && (
               <Dropdown
                 label="Available models"
-                selectedKey={availableModels.includes(config.model) ? config.model : undefined}
+                selectedKey={
+                  availableModels.some((modelEntry) => modelEntry.id === config.model)
+                    ? config.model
+                    : undefined
+                }
                 placeholder="Select a model from API list (optional)"
-                options={availableModels.map((modelId) => ({ key: modelId, text: modelId }))}
+                options={availableModels.map((modelEntry) => ({
+                  key: modelEntry.id,
+                  text: modelEntry.displayLabel,
+                  title:
+                    modelEntry.capabilities.length > 0
+                      ? `Capabilities: ${modelEntry.capabilities.join(", ")}`
+                      : "Capabilities unavailable",
+                }))}
                 onChange={(_ev, option) => option && setConfig({ ...config, model: String(option.key) })}
               />
             )}
@@ -1520,6 +1706,17 @@ export default function App(props: AppProps) {
 
         <div className="taskpane-section">
           <h3>Workflows</h3>
+          {hasActiveRequest && (
+            <div className="taskpane-actions">
+              <DefaultButton
+                iconProps={{ iconName: "Cancel" }}
+                title="Cancel active request"
+                onClick={onCancelActiveRequest}
+              >
+                Cancel request
+              </DefaultButton>
+            </div>
+          )}
           <div className="workflow-grid">
             {visibleWorkflows.map((definition) => (
               <DefaultButton
