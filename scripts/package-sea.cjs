@@ -50,6 +50,7 @@ function resolveSentinelFuse() {
 async function runPostject(executablePath, blobFilePath) {
   const blobBuffer = fs.readFileSync(blobFilePath);
   const sentinelFuse = resolveSentinelFuse();
+  const nodeExe = resolveNodeExecutablePath();
 
   const postjectArgs = [
     executablePath,
@@ -59,20 +60,56 @@ async function runPostject(executablePath, blobFilePath) {
     sentinelFuse,
   ];
 
-  const npmRunner = resolveNpmRunner();
-  const postjectPackage = process.env.POSTJECT_PACKAGE || DEFAULT_POSTJECT_PACKAGE;
-  const command = npmRunner.command;
-  const args = [
-    ...npmRunner.argsPrefix,
-    "--yes",
-    "--package",
-    postjectPackage,
-    "--",
-    "postject",
-    ...postjectArgs,
-  ];
+  // Try to use locally installed postject directly (avoids npm exec indirection
+  // which can resolve a different node.exe from PATH).
+  const postjectBinPath = path.join(rootDir, "node_modules", ".bin", "postject.cmd");
+  const postjectCliPath = path.join(rootDir, "node_modules", "postject", "dist", "cli.js");
 
-  const result = spawnSync(command, args, {
+  let postjectCommand;
+  let postjectCmdArgs;
+
+  if (fs.existsSync(postjectCliPath)) {
+    // Use postject directly from node_modules via the local node.exe.
+    postjectCommand = nodeExe;
+    postjectCmdArgs = [postjectCliPath, ...postjectArgs];
+  } else if (fs.existsSync(postjectBinPath)) {
+    postjectCommand = postjectBinPath;
+    postjectCmdArgs = [...postjectArgs];
+  } else {
+    // Fallback: install postject via npm exec using the same node.exe.
+    const postjectPackage = process.env.POSTJECT_PACKAGE || DEFAULT_POSTJECT_PACKAGE;
+    const npmExecPath = process.env.npm_execpath;
+    if (npmExecPath && fs.existsSync(npmExecPath)) {
+      postjectCommand = nodeExe;
+      postjectCmdArgs = [
+        npmExecPath,
+        "exec",
+        "--yes",
+        "--package",
+        postjectPackage,
+        "--",
+        "postject",
+        ...postjectArgs,
+      ];
+    } else {
+      const nodeDir = path.dirname(nodeExe);
+      const npmCmdPath = process.platform === "win32"
+        ? path.join(nodeDir, "npm.cmd")
+        : path.join(nodeDir, "npm");
+      postjectCommand = npmCmdPath;
+      postjectCmdArgs = [
+        "exec",
+        "--yes",
+        "--package",
+        postjectPackage,
+        "--",
+        "postject",
+        ...postjectArgs,
+      ];
+    }
+  }
+
+  const result = spawnSync(postjectCommand, postjectCmdArgs, {
     cwd: rootDir,
     stdio: "inherit",
     shell: false,
@@ -90,7 +127,7 @@ async function runPostject(executablePath, blobFilePath) {
     const hint = isNode22Plus
       ? `\n\nThis "Aborted()" error is a known incompatibility between postject alpha.6 and Node.js v22+.\n` +
         `postject is compiled with Emscripten and crashes on Node.js >= 22.\n` +
-        `Use Node.js v20 or v21 for the build (v20.20.1 works). Set SEA_NODE_EXE to point at a compatible node.exe:\n\n` +
+        `Use Node.js v20 or v21 for the build. Set SEA_NODE_EXE to point at a compatible node.exe:\n\n` +
         `  set SEA_NODE_EXE=C:\\nodejs\\node.exe\n` +
         `  npm run package:local:win\n`
       : "";
