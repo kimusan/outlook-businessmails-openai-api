@@ -18,6 +18,7 @@
       "dom"
     ],
     "pretty": true,
+    "skipLibCheck": true,
     "typeRoots": [
       "node_modules/@types"
     ]
