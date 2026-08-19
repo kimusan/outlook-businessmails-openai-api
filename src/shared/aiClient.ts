@@ -1327,9 +1327,7 @@ export async function createChatCompletion(
   options?: CreateChatCompletionOptions
 ): Promise<string> {
   const chatCompletionEndpoint = getChatCompletionEndpoint(config);
-  const processedMessages = config.systemPromptFirst
-    ? ensureSystemPromptFirst(messages)
-    : messages;
+  const processedMessages = config.systemPromptFirst ? ensureSystemPromptFirst(messages) : messages;
   const requestPayload = {
     model: config.model,
     temperature: config.temperature,
