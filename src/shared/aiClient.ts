@@ -1,4 +1,4 @@
-/* global window, navigator */
+/* global window, navigator, ReadableStream, TextDecoder */
 
 import { AiServiceConfig } from "./aiConfig";
 
@@ -138,6 +138,7 @@ interface ResponseLike {
     forEach: (callback: (value: string, key: string) => void) => void;
     get: (name: string) => string | null;
   };
+  body?: ReadableStream<Uint8Array> | null;
   text: () => Promise<string>;
 }
 
@@ -189,6 +190,7 @@ export interface ChatCompletionProgressEvent {
 
 export interface CreateChatCompletionOptions {
   onProgress?: (event: ChatCompletionProgressEvent) => void;
+  onDelta?: (deltaText: string, accumulatedText: string) => void;
   allowReasoningFollowUp?: boolean;
   allowFinalAnswerCleanup?: boolean;
   signal?: AbortSignalLike;
@@ -470,24 +472,48 @@ async function executeBrowserFetch(
   const localProxyUrl = new window.URL("/proxy/fetch", window.location.origin).toString();
   const proxyFetchMode = "same-origin" as const;
   const proxyCredentials = "omit" as const;
+
+  let isStreamRequest = false;
+  try {
+    const parsedBody = init.body ? JSON.parse(init.body) : null;
+    isStreamRequest = Boolean(parsedBody && parsedBody.stream);
+  } catch {
+    // Ignore
+  }
+
   const proxyRequest = {
     url,
     method: init.method,
     headers: init.headers,
     body: init.body,
+    stream: isStreamRequest,
   };
 
   const proxyResponse = await window.fetch(localProxyUrl, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Accept: "application/json",
+      Accept: isStreamRequest ? "text/event-stream, application/json" : "application/json",
     },
     body: JSON.stringify(proxyRequest),
     signal: init.signal as any,
     mode: proxyFetchMode,
     credentials: proxyCredentials,
   });
+
+  const proxyContentType = (proxyResponse.headers.get("content-type") || "").toLowerCase();
+  if (proxyContentType.includes("text/event-stream") && proxyResponse.ok) {
+    return {
+      response: proxyResponse as any,
+      context: {
+        fetchMode: proxyFetchMode,
+        fetchCredentials: proxyCredentials,
+        usedLocalProxy: true,
+        localProxyUrl,
+        proxyTargetUrl: url,
+      },
+    };
+  }
 
   const proxyResponseBody = await proxyResponse.text();
   if (!proxyResponse.ok) {
@@ -1337,16 +1363,18 @@ export async function createChatCompletion(
 ): Promise<string> {
   const chatCompletionEndpoint = getChatCompletionEndpoint(config);
   const processedMessages = config.systemPromptFirst ? ensureSystemPromptFirst(messages) : messages;
+  const isStreaming = typeof options?.onDelta === "function";
   const requestPayload = {
     model: config.model,
     temperature: config.temperature,
-    stream: false,
+    stream: isStreaming,
     messages: processedMessages,
   };
 
   emitChatProgress(options, "requestStarted", {
     model: requestPayload.model,
     messageCount: requestPayload.messages.length,
+    stream: isStreaming,
   });
 
   const { response, requestAttempt, requestAttempts } = await fetchWithAuth(
@@ -1360,101 +1388,184 @@ export async function createChatCompletion(
         model: requestPayload.model,
         temperature: requestPayload.temperature,
         messageCount: requestPayload.messages.length,
+        stream: isStreaming,
       },
     },
     options?.signal
   );
 
-  const responseBody = await parseResponseBody(response);
-  const responseContentType = requestAttempt.responseHeaders?.["content-type"] || "";
-  const streamedResult = parseStreamedChatCompletionBody(responseBody);
-  emitChatProgress(options, "responseReceived", {
-    status: response.status,
-    contentType: responseContentType,
-    usedLocalProxy: requestAttempt.usedLocalProxy,
-  });
-  if (streamedResult) {
-    emitChatProgress(options, "streamDetected", {
-      chunkCount: streamedResult.chunkCount,
-      parsedChunkCount: streamedResult.parsedChunkCount,
-      parseErrorCount: streamedResult.parseErrorCount,
-    });
-  }
+  const responseContentType = (
+    requestAttempt.responseHeaders?.["content-type"] || ""
+  ).toLowerCase();
+  const isSseStream = responseContentType.includes("text/event-stream");
 
-  let payload: ChatCompletionResponse | null = null;
-  try {
-    payload = responseBody ? (JSON.parse(responseBody) as ChatCompletionResponse) : null;
-  } catch {
-    payload = null;
-  }
+  let content = "";
+  let streamReasoning = "";
+  let responseBody = "";
+  let streamedResult: StreamedChatCompletionParseResult | null = null;
 
-  if (!payload && !streamedResult) {
-    throw new AiClientError("Chat completion response was not valid JSON.", {
-      operation: "chatCompletion",
-      url: chatCompletionEndpoint,
-      method: "POST",
-      requestHeaders: requestAttempt.requestHeaders,
-      requestBody: requestAttempt.requestBody,
-      fetchMode: requestAttempt.fetchMode,
-      fetchCredentials: requestAttempt.fetchCredentials,
-      usedLocalProxy: requestAttempt.usedLocalProxy,
-      localProxyUrl: requestAttempt.localProxyUrl,
-      proxyTargetUrl: requestAttempt.proxyTargetUrl,
+  if (isSseStream && response.body && typeof response.body.getReader === "function") {
+    emitChatProgress(options, "streamDetected", {});
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder("utf-8");
+    let buffer = "";
+    let accumulatedContent = "";
+
+    try {
+      while (true) {
+        if (options?.signal?.aborted) {
+          try {
+            await reader.cancel();
+          } catch {
+            // Ignore cancel error
+          }
+          break;
+        }
+
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split(/\r?\n/);
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith("data:")) {
+            continue;
+          }
+          const dataStr = trimmed.slice(5).trimStart();
+          if (!dataStr || dataStr === "[DONE]") {
+            continue;
+          }
+
+          try {
+            const parsed = JSON.parse(dataStr) as ChatCompletionResponse;
+            const choice = parsed.choices?.[0];
+            const delta = choice?.delta;
+            const textChunk = delta?.content || choice?.text || "";
+            const deltaContent =
+              typeof textChunk === "string" ? textChunk : normalizeChatContent(textChunk);
+
+            if (deltaContent) {
+              accumulatedContent += deltaContent;
+              if (options?.onDelta) {
+                options.onDelta(deltaContent, accumulatedContent);
+              }
+            }
+
+            const deltaReasoning = delta?.reasoning_content || delta?.reasoning || "";
+            if (deltaReasoning) {
+              streamReasoning += deltaReasoning;
+            }
+          } catch {
+            // Ignore partial chunk parse error
+          }
+        }
+      }
+    } catch {
+      if (options?.signal?.aborted) {
+        throw new Error("Request cancelled by user.");
+      }
+    }
+
+    content = accumulatedContent;
+  } else {
+    responseBody = await parseResponseBody(response);
+    streamedResult = parseStreamedChatCompletionBody(responseBody);
+    emitChatProgress(options, "responseReceived", {
       status: response.status,
-      statusText: response.statusText,
-      responseHeaders: requestAttempt.responseHeaders,
-      responseBody: truncateForLog(responseBody, 4000),
-      networkDiagnostics: requestAttempt.networkDiagnostics,
-      requestAttempts,
-      requestPayloadSummary: {
-        model: requestPayload.model,
-        temperature: requestPayload.temperature,
-        messageCount: requestPayload.messages.length,
-        responseContentType,
-        streamDetected: false,
-      },
-    });
-  }
-
-  if (!response.ok) {
-    const errorMessage =
-      payload?.error?.message ||
-      streamedResult?.errorMessage ||
-      `Request failed with status ${response.status}`;
-    throw new AiClientError(errorMessage, {
-      operation: "chatCompletion",
-      url: chatCompletionEndpoint,
-      method: "POST",
-      requestHeaders: requestAttempt.requestHeaders,
-      requestBody: requestAttempt.requestBody,
-      fetchMode: requestAttempt.fetchMode,
-      fetchCredentials: requestAttempt.fetchCredentials,
+      contentType: responseContentType,
       usedLocalProxy: requestAttempt.usedLocalProxy,
-      localProxyUrl: requestAttempt.localProxyUrl,
-      proxyTargetUrl: requestAttempt.proxyTargetUrl,
-      status: response.status,
-      statusText: response.statusText,
-      responseHeaders: requestAttempt.responseHeaders,
-      responseBody: truncateForLog(responseBody, 4000),
-      networkDiagnostics: requestAttempt.networkDiagnostics,
-      requestAttempts,
-      requestPayloadSummary: {
-        model: requestPayload.model,
-        temperature: requestPayload.temperature,
-        messageCount: requestPayload.messages.length,
-        responseContentType,
-        streamDetected: Boolean(streamedResult),
-        streamChunkCount: streamedResult?.chunkCount,
-        streamParsedChunkCount: streamedResult?.parsedChunkCount,
-        streamParseErrorCount: streamedResult?.parseErrorCount,
-      },
     });
-  }
 
-  const payloadContent = extractTextFromChatCompletionPayload(payload);
-  const streamContent = streamedResult?.content || "";
-  const streamReasoning = streamedResult?.reasoningContent || "";
-  const content = payloadContent || streamContent;
+    if (streamedResult) {
+      emitChatProgress(options, "streamDetected", {
+        chunkCount: streamedResult.chunkCount,
+        parsedChunkCount: streamedResult.parsedChunkCount,
+        parseErrorCount: streamedResult.parseErrorCount,
+      });
+    }
+
+    let payload: ChatCompletionResponse | null = null;
+    try {
+      payload = responseBody ? (JSON.parse(responseBody) as ChatCompletionResponse) : null;
+    } catch {
+      payload = null;
+    }
+
+    if (!payload && !streamedResult) {
+      throw new AiClientError("Chat completion response was not valid JSON.", {
+        operation: "chatCompletion",
+        url: chatCompletionEndpoint,
+        method: "POST",
+        requestHeaders: requestAttempt.requestHeaders,
+        requestBody: requestAttempt.requestBody,
+        fetchMode: requestAttempt.fetchMode,
+        fetchCredentials: requestAttempt.fetchCredentials,
+        usedLocalProxy: requestAttempt.usedLocalProxy,
+        localProxyUrl: requestAttempt.localProxyUrl,
+        proxyTargetUrl: requestAttempt.proxyTargetUrl,
+        status: response.status,
+        statusText: response.statusText,
+        responseHeaders: requestAttempt.responseHeaders,
+        responseBody: truncateForLog(responseBody, 4000),
+        networkDiagnostics: requestAttempt.networkDiagnostics,
+        requestAttempts,
+        requestPayloadSummary: {
+          model: requestPayload.model,
+          temperature: requestPayload.temperature,
+          messageCount: requestPayload.messages.length,
+          responseContentType,
+          streamDetected: false,
+        },
+      });
+    }
+
+    if (!response.ok) {
+      const errorMessage =
+        payload?.error?.message ||
+        streamedResult?.errorMessage ||
+        `Request failed with status ${response.status}`;
+      throw new AiClientError(errorMessage, {
+        operation: "chatCompletion",
+        url: chatCompletionEndpoint,
+        method: "POST",
+        requestHeaders: requestAttempt.requestHeaders,
+        requestBody: requestAttempt.requestBody,
+        fetchMode: requestAttempt.fetchMode,
+        fetchCredentials: requestAttempt.fetchCredentials,
+        usedLocalProxy: requestAttempt.usedLocalProxy,
+        localProxyUrl: requestAttempt.localProxyUrl,
+        proxyTargetUrl: requestAttempt.proxyTargetUrl,
+        status: response.status,
+        statusText: response.statusText,
+        responseHeaders: requestAttempt.responseHeaders,
+        responseBody: truncateForLog(responseBody, 4000),
+        networkDiagnostics: requestAttempt.networkDiagnostics,
+        requestAttempts,
+        requestPayloadSummary: {
+          model: requestPayload.model,
+          temperature: requestPayload.temperature,
+          messageCount: requestPayload.messages.length,
+          responseContentType,
+          streamDetected: Boolean(streamedResult),
+          streamChunkCount: streamedResult?.chunkCount,
+          streamParsedChunkCount: streamedResult?.parsedChunkCount,
+          streamParseErrorCount: streamedResult?.parseErrorCount,
+        },
+      });
+    }
+
+    const payloadContent = extractTextFromChatCompletionPayload(payload);
+    const streamContent = streamedResult?.content || "";
+    if (streamedResult?.reasoningContent) {
+      streamReasoning = streamedResult.reasoningContent;
+    }
+    content = payloadContent || streamContent;
+  }
 
   if (!content && streamReasoning) {
     emitChatProgress(options, "reasoningOnlyDetected", {

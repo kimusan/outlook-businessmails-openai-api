@@ -417,3 +417,56 @@ export function buildChatMessages(
     },
   ];
 }
+
+export function buildSubjectLineMessages(
+  emailBody: string,
+  currentSubject?: string
+): ChatMessage[] {
+  const limitedBody = limitWords(emailBody, 800);
+  const currentSubInfo =
+    currentSubject && currentSubject.trim()
+      ? `Current subject: "${currentSubject.trim()}"\n\n`
+      : "";
+
+  return [
+    {
+      role: "system",
+      content:
+        "You are an executive email assistant. Generate 3 crisp, professional, and descriptive subject lines for this email. " +
+        "Output ONLY a numbered list of 3 subject lines (1., 2., 3.), with no preamble or explanations.",
+    },
+    {
+      role: "user",
+      content: `${currentSubInfo}Email content:\n${limitedBody}\n\nSuggest 3 subject lines:`,
+    },
+  ];
+}
+
+export function buildActionItemsMessages(
+  emailText: string,
+  outputLanguage: SupportedLanguage
+): ChatMessage[] {
+  const limitedText = limitWords(emailText, 1800);
+
+  return [
+    {
+      role: "system",
+      content:
+        "You are an executive chief-of-staff assistant. Extract actionable items from email threads. " +
+        "Output markdown with clear bullet points. Keep it concise, structured, and decision-oriented.",
+    },
+    {
+      role: "user",
+      content:
+        `Extract action items from this email in ${outputLanguage}.\n\n` +
+        "Use this structure:\n" +
+        "## Action Items & Tasks\n" +
+        "- [Owner/Assignee]: Task description (Deadline if mentioned)\n\n" +
+        "## Key Dates & Deadlines\n" +
+        "- Date: Event / Milestone\n\n" +
+        "## Open Questions & Blockers\n" +
+        "- Unresolved items or questions needing response\n\n" +
+        `Email content:\n${limitedText}`,
+    },
+  ];
+}

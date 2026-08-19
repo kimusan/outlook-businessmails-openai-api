@@ -17,6 +17,10 @@ import {
 } from "@fluentui/react";
 import Progress from "./Progress";
 import {
+  getEmailMetadata,
+  getEmailSubject,
+  setComposeSubject,
+  extractGreetingName,
   getComposeTypeOrUnknown,
   getCurrentBodyHtml,
   getCurrentBodyText,
@@ -36,6 +40,8 @@ import {
   buildReplyDraftMessages,
   buildSummaryMessages,
   buildTranslationMessages,
+  buildSubjectLineMessages,
+  buildActionItemsMessages,
   DEFAULT_PROMPT_TEMPLATES,
   FormalityOption,
   LengthOption,
@@ -65,6 +71,7 @@ import {
 } from "../../shared/aiClient";
 import { ResultDialogOutgoingMessage, ResultDialogPayload } from "../../shared/dialogMessages";
 import { containsHtmlMarkup, formatStructuredTextAsHtml } from "../../shared/richText";
+import { computeWordDiff, formatDiffAsHtml } from "../../shared/diffUtils";
 
 export interface AppProps {
   title: string;
@@ -72,7 +79,13 @@ export interface AppProps {
 }
 
 type HostMode = "compose" | "read";
-type Workflow = "replyDraft" | "improveDraft" | "improveReplyDraft" | "translate" | "summary";
+type Workflow =
+  | "replyDraft"
+  | "improveDraft"
+  | "improveReplyDraft"
+  | "translate"
+  | "summary"
+  | "actionItems";
 type ContentScope = "body" | "selection";
 type SelectionSnapshot = {
   itemId: string;
@@ -92,6 +105,29 @@ type ResultHistoryEntry = {
 const RESULT_HISTORY_STORAGE_KEY = "outlookAiAssistant.resultHistoryByItem";
 const MAX_HISTORY_PER_ITEM = 20;
 const MAX_HISTORY_ITEMS = 80;
+
+const QUICK_REPLY_INTENTS = [
+  {
+    label: "💬 Confirm & Acknowledge",
+    text: "Acknowledge receipt, confirm all dates and timelines look good, and express enthusiasm to collaborate.",
+  },
+  {
+    label: "❓ Request Details",
+    text: "Thank them for the email, but politely ask for additional details, data, and clarification before proceeding.",
+  },
+  {
+    label: "📅 Propose Meeting",
+    text: "Acknowledge the email and propose scheduling a brief 15-30 minute sync meeting to align on next steps.",
+  },
+  {
+    label: "🤝 Approve & Proceed",
+    text: "Review the proposal/request, give full approval to proceed, and confirm readiness for next steps.",
+  },
+  {
+    label: "❌ Politely Decline",
+    text: "Politely and professionally decline due to current priorities and scheduling conflicts, but express appreciation.",
+  },
+];
 
 const workflowDefinitions: Array<{
   key: Workflow;
@@ -122,6 +158,13 @@ const workflowDefinitions: Array<{
     hostModes: ["compose"],
   },
   {
+    key: "actionItems",
+    label: "Extract action items & deadlines",
+    shortLabel: "Actions",
+    iconName: "CheckList",
+    hostModes: ["read", "compose"],
+  },
+  {
     key: "translate",
     label: "Translate selected text/message",
     shortLabel: "Translate",
@@ -136,6 +179,7 @@ const workflowDefinitions: Array<{
     hostModes: ["read"],
   },
 ];
+
 
 function parseHexColor(color: string): { r: number; g: number; b: number } | null {
   const normalized = color.trim().replace("#", "");
@@ -409,11 +453,30 @@ export default function App(props: AppProps) {
   const [chatQuestion, setChatQuestion] = React.useState<string>("");
   const [chatResponse, setChatResponse] = React.useState<string>("");
   const [isChatLoading, setIsChatLoading] = React.useState<boolean>(false);
+  const [streamingResultText, setStreamingResultText] = React.useState<string>("");
+  const [diffViewMode, setDiffViewMode] = React.useState<"text" | "diff">("text");
+  const [originalDraftForDiff, setOriginalDraftForDiff] = React.useState<string>("");
+  const [toastMessage, setToastMessage] = React.useState<string | null>(null);
+  const [subjectSuggestions, setSubjectSuggestions] = React.useState<string[]>([]);
+  const [isSuggestingSubject, setIsSuggestingSubject] = React.useState<boolean>(false);
+  const toastTimeoutRef = React.useRef<number | null>(null);
   const hasInitializedAutoSaveRef = React.useRef<boolean>(false);
   const selectionSnapshotRef = React.useRef<SelectionSnapshot | null>(null);
   const dialogRef = React.useRef<Office.Dialog | null>(null);
   const activeRequestControllerRef = React.useRef<AbortController | null>(null);
   const isConfigReady = validateAiServiceConfig(config) === null;
+
+  const showToast = React.useCallback((msg: string) => {
+    if (toastTimeoutRef.current !== null) {
+      window.clearTimeout(toastTimeoutRef.current);
+    }
+    setToastMessage(msg);
+    toastTimeoutRef.current = window.setTimeout(() => {
+      setToastMessage(null);
+      toastTimeoutRef.current = null;
+    }, 3000);
+  }, []);
+
 
   const chatCompletionsEndpointPreview = React.useMemo(() => {
     try {
@@ -713,7 +776,10 @@ export default function App(props: AppProps) {
     );
   };
 
-  const runAi = async (messages: { role: "system" | "user" | "assistant"; content: string }[]) => {
+  const runAi = async (
+    messages: { role: "system" | "user" | "assistant"; content: string }[],
+    onDeltaCustom?: (delta: string, accumulated: string) => void
+  ) => {
     const validationError = validateAiServiceConfig(config);
     if (validationError) {
       setIsConfigVisible(true);
@@ -727,10 +793,17 @@ export default function App(props: AppProps) {
     const controller = new AbortController();
     activeRequestControllerRef.current = controller;
     setHasActiveRequest(true);
+    setStreamingResultText("");
 
     try {
       return await createChatCompletion(config, messages, {
         signal: controller.signal,
+        onDelta: (delta, accumulated) => {
+          setStreamingResultText(accumulated);
+          if (onDeltaCustom) {
+            onDeltaCustom(delta, accumulated);
+          }
+        },
         onProgress: (event) => {
           if (event.stage === "requestStarted") {
             setStatusText("Contacting AI service...");
@@ -743,7 +816,7 @@ export default function App(props: AppProps) {
           }
 
           if (event.stage === "streamDetected") {
-            setStatusText("Streaming response detected. Building final output...");
+            setStatusText("Streaming response from AI...");
             return;
           }
 
@@ -764,17 +837,6 @@ export default function App(props: AppProps) {
             setStatusText("Final answer ready.");
             return;
           }
-
-          if (event.stage === "finalAnswerCleanupStarted") {
-            appendDebugLog("Cleaning planning text from thinking-model response", event.detail);
-            setStatusText("Cleaning intermediate planning text...");
-            return;
-          }
-
-          if (event.stage === "finalAnswerCleanupCompleted") {
-            appendDebugLog("Planning-text cleanup completed", event.detail);
-            setStatusText("Final answer ready.");
-          }
         },
       });
     } finally {
@@ -782,6 +844,60 @@ export default function App(props: AppProps) {
         activeRequestControllerRef.current = null;
       }
       setHasActiveRequest(false);
+    }
+  };
+
+  const onSuggestSubject = async () => {
+    try {
+      setIsSuggestingSubject(true);
+      setErrorText("");
+      const body = await getCurrentBodyText();
+      const currentSubject = await getEmailSubject();
+      if (!body.trim()) {
+        throw new Error("Add some content to your email draft first to suggest a subject.");
+      }
+
+      const rawSuggestions = await runAi(buildSubjectLineMessages(body, currentSubject));
+      const parsedLines = rawSuggestions
+        .split(/\r?\n/)
+        .map((line) => line.replace(/^\s*\d+[.)-]\s*/, "").replace(/^["']|["']$/g, "").trim())
+        .filter((line) => line.length > 3 && !line.toLowerCase().startsWith("subject:"));
+
+      setSubjectSuggestions(parsedLines.slice(0, 3));
+      showToast("Generated 3 subject line suggestions.");
+    } catch (error) {
+      if (isCancelledError(error)) {
+        setStatus("Request cancelled.");
+        return;
+      }
+      logError("Suggest subject failed", error);
+      setError((error as Error).message);
+    } finally {
+      setIsSuggestingSubject(false);
+    }
+  };
+
+  const onApplySubject = async (suggestedSubject: string) => {
+    try {
+      await setComposeSubject(suggestedSubject);
+      showToast(`✓ Subject set: "${suggestedSubject}"`);
+      setSubjectSuggestions([]);
+    } catch (error) {
+      logError("Apply subject failed", error);
+      setError((error as Error).message);
+    }
+  };
+
+  const onCopyResult = async () => {
+    try {
+      if (!resultText.trim()) {
+        throw new Error("No result to copy.");
+      }
+      await navigator.clipboard.writeText(resultText);
+      showToast("✓ Copied result to clipboard");
+    } catch (error) {
+      logError("Copy failed", error);
+      setError((error as Error).message);
     }
   };
 
@@ -794,6 +910,7 @@ export default function App(props: AppProps) {
     appendDebugLog("User cancelled active AI request.");
     setStatus("Cancelling request...");
   };
+
 
   const captureSelectionSnapshot = React.useCallback(async (reason: string): Promise<void> => {
     try {
@@ -1236,6 +1353,8 @@ export default function App(props: AppProps) {
           throw new Error("No draft text found to improve.");
         }
 
+        setOriginalDraftForDiff(sourceText);
+
         const optimizedDraft = optimizeSourceForLatency(sourceText);
         if (optimizedDraft.changed) {
           appendDebugLog("Context optimized for latency (improve draft)", {
@@ -1281,6 +1400,8 @@ export default function App(props: AppProps) {
           throw new Error("Could not detect referenced thread text for reply optimization.");
         }
 
+        setOriginalDraftForDiff(draftText);
+
         const optimizedDraft = optimizeSourceForLatency(draftText);
         const optimizedThread = optimizeSourceForLatency(threadText);
         if (optimizedDraft.changed || optimizedThread.changed) {
@@ -1319,6 +1440,37 @@ export default function App(props: AppProps) {
           setStatus("Reply-style draft improvement completed.");
         }
       }
+
+      if (activeWorkflow === "actionItems") {
+        const source = await resolveWorkflowSourceText(true, preferredScope !== "selection");
+        if (!source.text.trim()) {
+          throw new Error("No email content found to extract action items.");
+        }
+
+        const optimizedSource = optimizeSourceForLatency(source.text);
+        if (optimizedSource.changed) {
+          appendDebugLog("Context optimized for latency (action items)", {
+            reasons: optimizedSource.reason,
+            originalChars: source.text.length,
+            optimizedChars: optimizedSource.text.length,
+          });
+        }
+
+        const output = await runAi(
+          buildActionItemsMessages(optimizedSource.text, targetLanguage)
+        );
+        await presentResult(
+          createDialogPayload(
+            source.usedSelection ? "Action items (selection)" : "Action items & deadlines",
+            getWorkflowLabel(activeWorkflow),
+            targetLanguage,
+            output
+          ),
+          activeWorkflow
+        );
+        setStatus(`Action items extracted in ${targetLanguage}.`);
+      }
+
 
       if (activeWorkflow === "summary") {
         const source = await resolveWorkflowSourceText(true, preferredScope !== "selection");
@@ -1540,7 +1692,48 @@ export default function App(props: AppProps) {
     }
   };
 
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+        e.preventDefault();
+        if (!isLoading && !hasActiveRequest && isConfigReady) {
+          void onRunWorkflow();
+        }
+      } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "R" || e.key === "r")) {
+        e.preventDefault();
+        if (hostMode === "compose" && resultText) {
+          void onApplyToDraft();
+        }
+      } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "C" || e.key === "c")) {
+        e.preventDefault();
+        if (resultText) {
+          void onCopyResult();
+        }
+      } else if (e.key === "Escape") {
+        if (hasActiveRequest) {
+          onCancelActiveRequest();
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [
+    isLoading,
+    hasActiveRequest,
+    isConfigReady,
+    hostMode,
+    resultText,
+    workflow,
+    direction,
+    tone,
+    formality,
+    length,
+    targetLanguage,
+  ]);
+
   return (
+
     <div className={`ms-welcome theme-${uiTheme}`} style={officeThemeVars as React.CSSProperties}>
       <main className="ms-welcome__main">
         <div className="taskpane-topbar">
@@ -1819,14 +2012,37 @@ export default function App(props: AppProps) {
             />
           )}
           {workflow === "replyDraft" && (
-            <TextField
-              multiline
-              rows={4}
-              label="Direction for reply"
-              placeholder="Example: confirm timeline, ask for final numbers by Friday, and keep the tone polite"
-              value={direction}
-              onChange={(_ev, value) => setDirection(value || "")}
-            />
+            <>
+              <div className="taskpane-heading-row" style={{ marginTop: "4px" }}>
+                <span className="taskpane-config-state" style={{ fontWeight: 600 }}>
+                  Quick reply intent:
+                </span>
+              </div>
+              <div className="quick-reply-chips">
+                {QUICK_REPLY_INTENTS.map((intent, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    className="chip-button"
+                    onClick={() => {
+                      setDirection(intent.text);
+                      showToast(`Direction: ${intent.label}`);
+                    }}
+                    title={intent.text}
+                  >
+                    {intent.label}
+                  </button>
+                ))}
+              </div>
+              <TextField
+                multiline
+                rows={4}
+                label="Direction for reply"
+                placeholder="Example: confirm timeline, ask for final numbers by Friday, and keep the tone polite"
+                value={direction}
+                onChange={(_ev, value) => setDirection(value || "")}
+              />
+            </>
           )}
 
           {(workflow === "replyDraft" ||
@@ -1854,7 +2070,7 @@ export default function App(props: AppProps) {
             </>
           )}
 
-          {workflow === "translate" && (
+          {(workflow === "translate" || workflow === "actionItems") && (
             <Dropdown
               label="Target language"
               selectedKey={targetLanguage}
@@ -1866,7 +2082,126 @@ export default function App(props: AppProps) {
           )}
         </div>
 
-        {isLoading && (
+        {hostMode === "compose" && (
+          <div className="taskpane-section">
+            <div className="taskpane-heading-row">
+              <h3>Subject Line Assistant</h3>
+              <DefaultButton
+                onClick={onSuggestSubject}
+                disabled={isSuggestingSubject || hasActiveRequest || !isConfigReady}
+                iconProps={{ iconName: "Lightbulb" }}
+              >
+                {isSuggestingSubject ? "Suggesting..." : "Suggest subjects"}
+              </DefaultButton>
+            </div>
+            {subjectSuggestions.length > 0 && (
+              <div className="subject-suggestions">
+                {subjectSuggestions.map((suggestion, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    className="subject-suggestion-item"
+                    onClick={() => void onApplySubject(suggestion)}
+                    title="Click to apply this subject line to the email"
+                  >
+                    <span>{suggestion}</span>
+                    <span
+                      style={{ fontSize: "11px", color: "var(--app-accent)", fontWeight: 600 }}
+                    >
+                      Apply
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {(hasActiveRequest || activePayload) && (
+          <div className="taskpane-section">
+            <div className="taskpane-heading-row">
+              <h3>
+                {hasActiveRequest ? "Generating with AI..." : activePayload?.title || "AI Result"}
+              </h3>
+              <div className="taskpane-actions">
+                {activePayload &&
+                  (workflow === "improveDraft" || workflow === "improveReplyDraft") &&
+                  originalDraftForDiff && (
+                    <div className="diff-toggle-group">
+                      <button
+                        type="button"
+                        className={`diff-toggle-btn ${diffViewMode === "text" ? "is-active" : ""}`}
+                        onClick={() => setDiffViewMode("text")}
+                      >
+                        Text
+                      </button>
+                      <button
+                        type="button"
+                        className={`diff-toggle-btn ${diffViewMode === "diff" ? "is-active" : ""}`}
+                        onClick={() => setDiffViewMode("diff")}
+                      >
+                        Visual Diff
+                      </button>
+                    </div>
+                  )}
+                {activePayload && (
+                  <DefaultButton
+                    className="taskpane-icon-button"
+                    iconProps={{ iconName: "Copy" }}
+                    title="Copy result (Ctrl+Shift+C)"
+                    ariaLabel="Copy result"
+                    onClick={onCopyResult}
+                  />
+                )}
+              </div>
+            </div>
+
+            {hasActiveRequest && (
+              <div className="taskpane-markup-preview">
+                <div className="taskpane-markup">
+                  {streamingResultText || "Connecting to AI model..."}
+                  <span className="streaming-cursor" />
+                </div>
+              </div>
+            )}
+
+            {!hasActiveRequest && activePayload && (
+              <>
+                {diffViewMode === "diff" &&
+                (workflow === "improveDraft" || workflow === "improveReplyDraft") &&
+                originalDraftForDiff ? (
+                  <div
+                    className="diff-container"
+                    dangerouslySetInnerHTML={{
+                      __html: formatDiffAsHtml(computeWordDiff(originalDraftForDiff, resultText)),
+                    }}
+                  />
+                ) : (
+                  <div
+                    className="taskpane-markup-preview"
+                    dangerouslySetInnerHTML={{
+                      __html: formatStructuredTextAsHtml(resultText),
+                    }}
+                  />
+                )}
+
+                {hostMode === "compose" && (
+                  <div className="taskpane-actions">
+                    <PrimaryButton onClick={onApplyToDraft} title="Replace draft (Ctrl+Shift+R)">
+                      Replace draft
+                    </PrimaryButton>
+                    <DefaultButton onClick={onInsertAtCursor}>Insert at cursor</DefaultButton>
+                    <DefaultButton onClick={onCopyResult} title="Copy to clipboard (Ctrl+Shift+C)">
+                      Copy
+                    </DefaultButton>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {isLoading && !hasActiveRequest && (
           <Progress title="Loading" message="The AI service is processing your request..." />
         )}
 
@@ -1908,17 +2243,8 @@ export default function App(props: AppProps) {
               ))}
             </div>
           )}
-          {hostMode === "compose" && activePayload && (
-            <div className="taskpane-actions">
-              <PrimaryButton onClick={onApplyToDraft}>
-                Replace draft with selected result
-              </PrimaryButton>
-              <DefaultButton onClick={onInsertAtCursor}>
-                Insert selected result at cursor
-              </DefaultButton>
-            </div>
-          )}
         </div>
+
 
         <div className="taskpane-section">
           <h3>Chat with AI</h3>
@@ -2015,6 +2341,8 @@ export default function App(props: AppProps) {
           <PrimaryButton onClick={() => setIsPromptEditorVisible(false)} text="Done" />
         </DialogFooter>
       </Dialog>
+      {toastMessage && <div className="taskpane-toast">{toastMessage}</div>}
     </div>
   );
 }
+

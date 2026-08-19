@@ -324,6 +324,36 @@ async function handleProxyFetch(request, response) {
     responseHeaders[key] = value;
   });
 
+  const contentType = String(upstreamResponse.headers.get("content-type") || "").toLowerCase();
+  const isSseStream = contentType.includes("text/event-stream");
+  const wantsStream = Boolean(payload && payload.stream);
+
+  if ((isSseStream || wantsStream) && upstreamResponse.ok && upstreamResponse.body) {
+    response.writeHead(upstreamResponse.status, {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+      "Access-Control-Allow-Origin": "*",
+    });
+
+    try {
+      const reader = upstreamResponse.body.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+        response.write(value);
+      }
+    } catch (streamError) {
+      log("warn", "Proxy streaming error", { error: streamError.message });
+    } finally {
+      response.end();
+    }
+    return;
+  }
+
   let upstreamBody = "";
   try {
     upstreamBody = await upstreamResponse.text();
@@ -339,6 +369,7 @@ async function handleProxyFetch(request, response) {
     body: upstreamBody,
   });
 }
+
 
 function createRequestHandler(staticDir, port) {
   return (request, response) => {

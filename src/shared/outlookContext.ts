@@ -236,3 +236,128 @@ export function limitWords(text: string, maxWords: number): string {
 
   return words.slice(0, maxWords).join(" ");
 }
+
+export interface EmailParticipant {
+  displayName: string;
+  emailAddress: string;
+}
+
+export interface EmailMetadata {
+  subject: string;
+  from?: EmailParticipant;
+  to: EmailParticipant[];
+  cc: EmailParticipant[];
+}
+
+export async function getEmailSubject(): Promise<string> {
+  const item = getMailboxItem() as any;
+  if (!item) {
+    return "";
+  }
+
+  if (typeof item.subject === "string") {
+    return item.subject;
+  }
+
+  if (item.subject && typeof item.subject.getAsync === "function") {
+    try {
+      const value = await fromAsyncResult<string>((done) => {
+        item.subject.getAsync(done);
+      });
+      return typeof value === "string" ? value : "";
+    } catch {
+      return "";
+    }
+  }
+
+  return "";
+}
+
+export async function setComposeSubject(subject: string): Promise<void> {
+  const item = getMailboxItem() as any;
+  if (!item || !item.subject || typeof item.subject.setAsync !== "function") {
+    throw new Error("Current context does not support setting email subject.");
+  }
+
+  await fromAsyncResult<void>((done) => {
+    item.subject.setAsync(subject, done);
+  });
+}
+
+function normalizeRecipient(entry: any): EmailParticipant | null {
+  if (!entry) {
+    return null;
+  }
+  if (typeof entry === "string") {
+    return { displayName: entry, emailAddress: entry };
+  }
+  const displayName = typeof entry.displayName === "string" ? entry.displayName.trim() : "";
+  const emailAddress = typeof entry.emailAddress === "string" ? entry.emailAddress.trim() : "";
+  if (!displayName && !emailAddress) {
+    return null;
+  }
+  return {
+    displayName: displayName || emailAddress,
+    emailAddress: emailAddress || displayName,
+  };
+}
+
+export async function getEmailMetadata(): Promise<EmailMetadata> {
+  const item = getMailboxItem() as any;
+  const subject = await getEmailSubject();
+  if (!item) {
+    return { subject, to: [], cc: [] };
+  }
+
+  let from: EmailParticipant | undefined;
+  if (item.from) {
+    from = normalizeRecipient(item.from) || undefined;
+  }
+
+  let to: EmailParticipant[] = [];
+  if (Array.isArray(item.to)) {
+    to = item.to.map(normalizeRecipient).filter(Boolean) as EmailParticipant[];
+  } else if (item.to && typeof item.to.getAsync === "function") {
+    try {
+      const rawTo = await fromAsyncResult<any[]>((done) => item.to.getAsync(done));
+      if (Array.isArray(rawTo)) {
+        to = rawTo.map(normalizeRecipient).filter(Boolean) as EmailParticipant[];
+      }
+    } catch {
+      // Ignore
+    }
+  }
+
+  let cc: EmailParticipant[] = [];
+  if (Array.isArray(item.cc)) {
+    cc = item.cc.map(normalizeRecipient).filter(Boolean) as EmailParticipant[];
+  } else if (item.cc && typeof item.cc.getAsync === "function") {
+    try {
+      const rawCc = await fromAsyncResult<any[]>((done) => item.cc.getAsync(done));
+      if (Array.isArray(rawCc)) {
+        cc = rawCc.map(normalizeRecipient).filter(Boolean) as EmailParticipant[];
+      }
+    } catch {
+      // Ignore
+    }
+  }
+
+  return { subject, from, to, cc };
+}
+
+export function extractGreetingName(from?: EmailParticipant): string {
+  if (!from) {
+    return "";
+  }
+  const name = from.displayName || from.emailAddress || "";
+  if (!name) {
+    return "";
+  }
+  if (name.includes(",")) {
+    const parts = name.split(",");
+    if (parts.length > 1 && parts[1].trim()) {
+      return parts[1].trim().split(/\s+/)[0];
+    }
+  }
+  return name.split(/\s+/)[0];
+}
