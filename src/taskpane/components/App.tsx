@@ -63,10 +63,7 @@ import {
   listAvailableModels,
   refreshAccessToken,
 } from "../../shared/aiClient";
-import {
-  ResultDialogOutgoingMessage,
-  ResultDialogPayload,
-} from "../../shared/dialogMessages";
+import { ResultDialogOutgoingMessage, ResultDialogPayload } from "../../shared/dialogMessages";
 import { containsHtmlMarkup, formatStructuredTextAsHtml } from "../../shared/richText";
 
 export interface AppProps {
@@ -192,7 +189,11 @@ function saveResultHistoryByItem(historyByItem: Record<string, ResultHistoryEntr
   }
 }
 
-function optimizeSourceForLatency(input: string): { text: string; changed: boolean; reason: string[] } {
+function optimizeSourceForLatency(input: string): {
+  text: string;
+  changed: boolean;
+  reason: string[];
+} {
   const reasons: string[] = [];
   let output = (input || "").replace(/\r\n/g, "\n");
 
@@ -390,8 +391,8 @@ export default function App(props: AppProps) {
   const [targetLanguage, setTargetLanguage] = React.useState<SupportedLanguage>(
     initialConfig.preferredLanguage
   );
-  const [historyByItem, setHistoryByItem] = React.useState<Record<string, ResultHistoryEntry[]>>(() =>
-    loadResultHistoryByItem()
+  const [historyByItem, setHistoryByItem] = React.useState<Record<string, ResultHistoryEntry[]>>(
+    () => loadResultHistoryByItem()
   );
   const [selectedHistoryEntryId, setSelectedHistoryEntryId] = React.useState<string>("");
   const [statusText, setStatusText] = React.useState<string>("");
@@ -399,9 +400,8 @@ export default function App(props: AppProps) {
   const [debugLog, setDebugLog] = React.useState<string[]>([]);
   const [isDebugVisible, setIsDebugVisible] = React.useState<boolean>(false);
   const [isPromptEditorVisible, setIsPromptEditorVisible] = React.useState<boolean>(false);
-  const [selectedPromptTemplateKey, setSelectedPromptTemplateKey] = React.useState<PromptTemplateKey>(
-    "replyDraftSystem"
-  );
+  const [selectedPromptTemplateKey, setSelectedPromptTemplateKey] =
+    React.useState<PromptTemplateKey>("replyDraftSystem");
   const [isLoading, setIsLoading] = React.useState<boolean>(false);
   const [isSavingConfig, setIsSavingConfig] = React.useState<boolean>(false);
   const [isCheckingApi, setIsCheckingApi] = React.useState<boolean>(false);
@@ -441,8 +441,9 @@ export default function App(props: AppProps) {
 
   const selectedPromptTemplateDefinition = React.useMemo(
     () =>
-      PROMPT_TEMPLATE_DEFINITIONS.find((definition) => definition.key === selectedPromptTemplateKey) ||
-      PROMPT_TEMPLATE_DEFINITIONS[0],
+      PROMPT_TEMPLATE_DEFINITIONS.find(
+        (definition) => definition.key === selectedPromptTemplateKey
+      ) || PROMPT_TEMPLATE_DEFINITIONS[0],
     [selectedPromptTemplateKey]
   );
   const visibleWorkflows = React.useMemo(
@@ -531,8 +532,8 @@ export default function App(props: AppProps) {
       addHandlerAsync?: (eventType: string, handler: () => void) => void;
       removeHandlerAsync?: (eventType: string, options: { handler: () => void }) => void;
     };
-    const itemChangedEvent = (Office as unknown as { EventType?: { ItemChanged?: string } })?.EventType
-      ?.ItemChanged;
+    const itemChangedEvent = (Office as unknown as { EventType?: { ItemChanged?: string } })
+      ?.EventType?.ItemChanged;
     const onItemChanged = () => syncCurrentItemId();
 
     if (mailbox && itemChangedEvent && typeof mailbox.addHandlerAsync === "function") {
@@ -563,15 +564,17 @@ export default function App(props: AppProps) {
 
   React.useEffect(() => {
     const applyTheme = () => {
-      const officeTheme = (Office?.context as unknown as {
-        officeTheme?: {
-          bodyBackgroundColor?: string;
-          bodyForegroundColor?: string;
-          controlBackgroundColor?: string;
-          controlForegroundColor?: string;
-          disabledTextColor?: string;
-        };
-      })?.officeTheme;
+      const officeTheme = (
+        Office?.context as unknown as {
+          officeTheme?: {
+            bodyBackgroundColor?: string;
+            bodyForegroundColor?: string;
+            controlBackgroundColor?: string;
+            controlForegroundColor?: string;
+            disabledTextColor?: string;
+          };
+        }
+      )?.officeTheme;
       const nextMode = detectUiTheme(officeTheme?.bodyBackgroundColor);
       setUiTheme(nextMode);
       const nextVars: Record<string, string> = {};
@@ -595,12 +598,14 @@ export default function App(props: AppProps) {
 
     applyTheme();
 
-    const officeTheme = (Office?.context as unknown as {
-      officeTheme?: {
-        addHandlerAsync?: (eventType: string, handler: () => void) => void;
-        removeHandlerAsync?: (eventType: string, options: { handler: () => void }) => void;
-      };
-    } | null)?.officeTheme;
+    const officeTheme = (
+      Office?.context as unknown as {
+        officeTheme?: {
+          addHandlerAsync?: (eventType: string, handler: () => void) => void;
+          removeHandlerAsync?: (eventType: string, options: { handler: () => void }) => void;
+        };
+      } | null
+    )?.officeTheme;
     const themeChangedEvent = (Office as unknown as { EventType?: { OfficeThemeChanged?: string } })
       ?.EventType?.OfficeThemeChanged;
 
@@ -790,37 +795,34 @@ export default function App(props: AppProps) {
     setStatus("Cancelling request...");
   };
 
-  const captureSelectionSnapshot = React.useCallback(
-    async (reason: string): Promise<void> => {
-      try {
-        const itemId = getCurrentItemIdOrEmpty();
-        const [selectedText, selectedHtml] = await Promise.all([
-          getSelectedTextOrEmpty(),
-          getSelectedHtmlOrEmpty(),
-        ]);
+  const captureSelectionSnapshot = React.useCallback(async (reason: string): Promise<void> => {
+    try {
+      const itemId = getCurrentItemIdOrEmpty();
+      const [selectedText, selectedHtml] = await Promise.all([
+        getSelectedTextOrEmpty(),
+        getSelectedHtmlOrEmpty(),
+      ]);
 
-        selectionSnapshotRef.current = {
-          itemId,
-          text: selectedText,
-          html: selectedHtml,
-          capturedAt: new Date().toISOString(),
-        };
+      selectionSnapshotRef.current = {
+        itemId,
+        text: selectedText,
+        html: selectedHtml,
+        capturedAt: new Date().toISOString(),
+      };
 
-        appendDebugLog("Selection snapshot captured", {
-          reason,
-          itemId: itemId || "[empty]",
-          textChars: selectedText.trim().length,
-          htmlChars: selectedHtml.trim().length,
-        });
-      } catch (error) {
-        appendDebugLog("Selection snapshot capture failed", {
-          reason,
-          message: error instanceof Error ? error.message : String(error),
-        });
-      }
-    },
-    []
-  );
+      appendDebugLog("Selection snapshot captured", {
+        reason,
+        itemId: itemId || "[empty]",
+        textChars: selectedText.trim().length,
+        htmlChars: selectedHtml.trim().length,
+      });
+    } catch (error) {
+      appendDebugLog("Selection snapshot capture failed", {
+        reason,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }, []);
 
   const getSelectionSnapshotForCurrentItem = (): SelectionSnapshot | null => {
     const snapshot = selectionSnapshotRef.current;
@@ -930,7 +932,11 @@ export default function App(props: AppProps) {
   };
 
   const openOrUpdateResultDialog = async (payload: ResultDialogPayload) => {
-    if (!Office.context || !Office.context.ui || typeof Office.context.ui.displayDialogAsync !== "function") {
+    if (
+      !Office.context ||
+      !Office.context.ui ||
+      typeof Office.context.ui.displayDialogAsync !== "function"
+    ) {
       throw new Error("Outlook dialog API is unavailable in this client.");
     }
 
@@ -949,7 +955,8 @@ export default function App(props: AppProps) {
           if (asyncResult.status !== Office.AsyncResultStatus.Succeeded) {
             const resultError = asyncResult.error as { message?: string; error?: number };
             const errorMessage =
-              resultError.message || `Dialog API error code: ${String(resultError.error ?? "unknown")}`;
+              resultError.message ||
+              `Dialog API error code: ${String(resultError.error ?? "unknown")}`;
             reject(new Error(errorMessage));
             return;
           }
@@ -996,7 +1003,10 @@ export default function App(props: AppProps) {
     });
   };
 
-  const presentResult = async (payload: ResultDialogPayload, workflowKey: Workflow): Promise<void> => {
+  const presentResult = async (
+    payload: ResultDialogPayload,
+    workflowKey: Workflow
+  ): Promise<void> => {
     const itemId = getCurrentItemIdOrEmpty() || "__unknown__";
     const now = new Date().toISOString();
     const historyEntry: ResultHistoryEntry = {
@@ -1008,7 +1018,10 @@ export default function App(props: AppProps) {
     };
 
     setHistoryByItem((previous) => {
-      const updatedForItem = [historyEntry, ...(previous[itemId] || [])].slice(0, MAX_HISTORY_PER_ITEM);
+      const updatedForItem = [historyEntry, ...(previous[itemId] || [])].slice(
+        0,
+        MAX_HISTORY_PER_ITEM
+      );
       const next: Record<string, ResultHistoryEntry[]> = {
         ...previous,
         [itemId]: updatedForItem,
@@ -1202,8 +1215,12 @@ export default function App(props: AppProps) {
           )
         );
         await presentResult(
-          createDialogPayload("Generated reply draft", getWorkflowLabel(activeWorkflow), "Original", output)
-          ,
+          createDialogPayload(
+            "Generated reply draft",
+            getWorkflowLabel(activeWorkflow),
+            "Original",
+            output
+          ),
           activeWorkflow
         );
         setStatus("Reply draft generated.");
@@ -1288,7 +1305,12 @@ export default function App(props: AppProps) {
           )
         );
         await presentResult(
-          createDialogPayload("Improved reply draft", getWorkflowLabel(activeWorkflow), "Original", output),
+          createDialogPayload(
+            "Improved reply draft",
+            getWorkflowLabel(activeWorkflow),
+            "Original",
+            output
+          ),
           activeWorkflow
         );
         if (composeType.toLowerCase().includes("reply") || replyContext.threadText) {
@@ -1438,10 +1460,15 @@ export default function App(props: AppProps) {
       }
 
       const activeWorkflowForResult = selectedHistoryEntry?.workflowKey || workflow;
-      if (activeWorkflowForResult === "improveReplyDraft" || activeWorkflowForResult === "replyDraft") {
+      if (
+        activeWorkflowForResult === "improveReplyDraft" ||
+        activeWorkflowForResult === "replyDraft"
+      ) {
         const originalBody = await getCurrentBodyText();
         const replyContext = splitDraftAndThread(originalBody);
-        const combined = replyContext.threadText ? `${resultText}\n\n${replyContext.threadText}` : resultText;
+        const combined = replyContext.threadText
+          ? `${resultText}\n\n${replyContext.threadText}`
+          : resultText;
         await setComposeBodyText(combined);
       } else if (containsHtmlMarkup(resultText)) {
         await setComposeBodyHtml(resultText);
@@ -1497,7 +1524,9 @@ export default function App(props: AppProps) {
       );
 
       setChatResponse(output);
-      setStatus(source.usedSelection ? "Chat response ready (selection context)." : "Chat response ready.");
+      setStatus(
+        source.usedSelection ? "Chat response ready (selection context)." : "Chat response ready."
+      );
     } catch (error) {
       if (isCancelledError(error)) {
         setStatus("Request cancelled.");
@@ -1516,7 +1545,9 @@ export default function App(props: AppProps) {
       <main className="ms-welcome__main">
         <div className="taskpane-topbar">
           <div className="taskpane-icon-row">
-            {!isConfigReady && <span className="taskpane-pill taskpane-pill-warning">Configuration missing</span>}
+            {!isConfigReady && (
+              <span className="taskpane-pill taskpane-pill-warning">Configuration missing</span>
+            )}
             <DefaultButton
               className="taskpane-icon-button"
               iconProps={{ iconName: "Bug" }}
@@ -1550,14 +1581,22 @@ export default function App(props: AppProps) {
               placeholder="/v1/chat/completions"
               onChange={(_ev, value) => setConfig({ ...config, chatCompletionsPath: value || "" })}
             />
-            <TextField label="Resolved chat completions endpoint" value={chatCompletionsEndpointPreview} readOnly />
+            <TextField
+              label="Resolved chat completions endpoint"
+              value={chatCompletionsEndpointPreview}
+              readOnly
+            />
             <TextField
               label="Model list path"
               value={config.modelListPath}
               placeholder="/v1/model_list"
               onChange={(_ev, value) => setConfig({ ...config, modelListPath: value || "" })}
             />
-            <TextField label="Resolved model list endpoint" value={modelListEndpointPreview} readOnly />
+            <TextField
+              label="Resolved model list endpoint"
+              value={modelListEndpointPreview}
+              readOnly
+            />
             <Dropdown
               label="Authentication mode"
               selectedKey={config.authMode}
@@ -1581,7 +1620,11 @@ export default function App(props: AppProps) {
                   placeholder="/v1/token/refresh"
                   onChange={(_ev, value) => setConfig({ ...config, tokenRefreshPath: value || "" })}
                 />
-                <TextField label="Resolved token refresh endpoint" value={tokenRefreshEndpointPreview} readOnly />
+                <TextField
+                  label="Resolved token refresh endpoint"
+                  value={tokenRefreshEndpointPreview}
+                  readOnly
+                />
                 <TextField
                   type="password"
                   canRevealPassword
@@ -1625,13 +1668,15 @@ export default function App(props: AppProps) {
                 {isCheckingApi
                   ? "Checking API..."
                   : config.authMode === "umsToken"
-                    ? "Check API & refresh token"
-                    : "Check API key"}
+                  ? "Check API & refresh token"
+                  : "Check API key"}
               </DefaultButton>
               <DefaultButton onClick={onRefreshModels} disabled={isLoadingModels}>
                 {isLoadingModels ? "Loading models..." : "Refresh model list"}
               </DefaultButton>
-              <DefaultButton onClick={() => setIsPromptEditorVisible(true)}>Edit prompts</DefaultButton>
+              <DefaultButton onClick={() => setIsPromptEditorVisible(true)}>
+                Edit prompts
+              </DefaultButton>
             </div>
             {config.authMode === "umsToken" && (
               <p className="taskpane-config-state">
@@ -1660,7 +1705,9 @@ export default function App(props: AppProps) {
                       ? `Capabilities: ${modelEntry.capabilities.join(", ")}`
                       : "Capabilities unavailable",
                 }))}
-                onChange={(_ev, option) => option && setConfig({ ...config, model: String(option.key) })}
+                onChange={(_ev, option) =>
+                  option && setConfig({ ...config, model: String(option.key) })
+                }
               />
             )}
             <TextField
@@ -1675,7 +1722,8 @@ export default function App(props: AppProps) {
             )}
             {modelListError && (
               <MessageBar messageBarType={MessageBarType.warning} isMultiline>
-                Unable to load model list: {modelListError}. You can still enter a custom model manually.
+                Unable to load model list: {modelListError}. You can still enter a custom model
+                manually.
               </MessageBar>
             )}
             <SpinButton
@@ -1694,12 +1742,14 @@ export default function App(props: AppProps) {
             <Checkbox
               label="Place system prompt first in message sequence"
               checked={config.systemPromptFirst}
-              onChange={(_ev, checked) => setConfig({ ...config, systemPromptFirst: checked ?? false })}
+              onChange={(_ev, checked) =>
+                setConfig({ ...config, systemPromptFirst: checked ?? false })
+              }
             />
             <p className="taskpane-config-state">
               Enable this for models that require the system message at the beginning of the array
-              (e.g. Qwen models via vLLM). Required to resolve
-              &quot;System message must be at the beginning&quot; errors.
+              (e.g. Qwen models via vLLM). Required to resolve &quot;System message must be at the
+              beginning&quot; errors.
             </p>
             <div className="taskpane-actions">
               <PrimaryButton onClick={onSaveConfig} disabled={isSavingConfig}>
@@ -1751,7 +1801,8 @@ export default function App(props: AppProps) {
             ))}
           </div>
           <p className="taskpane-config-state">
-            Tap a workflow button to run. Translation uses a two-step flow to let you choose language first.
+            Tap a workflow button to run. Translation uses a two-step flow to let you choose
+            language first.
           </p>
         </div>
 
@@ -1778,7 +1829,9 @@ export default function App(props: AppProps) {
             />
           )}
 
-          {(workflow === "replyDraft" || workflow === "improveDraft" || workflow === "improveReplyDraft") && (
+          {(workflow === "replyDraft" ||
+            workflow === "improveDraft" ||
+            workflow === "improveReplyDraft") && (
             <>
               <Dropdown
                 label="Tone"
@@ -1806,12 +1859,16 @@ export default function App(props: AppProps) {
               label="Target language"
               selectedKey={targetLanguage}
               options={languageOptions}
-              onChange={(_ev, option) => option && setTargetLanguage(option.key as SupportedLanguage)}
+              onChange={(_ev, option) =>
+                option && setTargetLanguage(option.key as SupportedLanguage)
+              }
             />
           )}
         </div>
 
-        {isLoading && <Progress title="Loading" message="The AI service is processing your request..." />}
+        {isLoading && (
+          <Progress title="Loading" message="The AI service is processing your request..." />
+        )}
 
         {statusText && (
           <MessageBar messageBarType={MessageBarType.success} isMultiline>
@@ -1836,7 +1893,9 @@ export default function App(props: AppProps) {
                 <button
                   key={entry.id}
                   type="button"
-                  className={`history-item ${selectedHistoryEntryId === entry.id ? "is-selected" : ""}`}
+                  className={`history-item ${
+                    selectedHistoryEntryId === entry.id ? "is-selected" : ""
+                  }`}
                   onClick={() => {
                     void onOpenHistoryEntry(entry);
                   }}
@@ -1851,8 +1910,12 @@ export default function App(props: AppProps) {
           )}
           {hostMode === "compose" && activePayload && (
             <div className="taskpane-actions">
-              <PrimaryButton onClick={onApplyToDraft}>Replace draft with selected result</PrimaryButton>
-              <DefaultButton onClick={onInsertAtCursor}>Insert selected result at cursor</DefaultButton>
+              <PrimaryButton onClick={onApplyToDraft}>
+                Replace draft with selected result
+              </PrimaryButton>
+              <DefaultButton onClick={onInsertAtCursor}>
+                Insert selected result at cursor
+              </DefaultButton>
             </div>
           )}
         </div>
@@ -1876,7 +1939,9 @@ export default function App(props: AppProps) {
             <div
               className="taskpane-markup"
               dangerouslySetInnerHTML={{
-                __html: formatStructuredTextAsHtml(chatResponse || "Chat response will appear here."),
+                __html: formatStructuredTextAsHtml(
+                  chatResponse || "Chat response will appear here."
+                ),
               }}
             />
           </div>
@@ -1933,7 +1998,9 @@ export default function App(props: AppProps) {
         <p className="taskpane-config-state">
           Placeholders:{" "}
           {selectedPromptTemplateDefinition.placeholders.length > 0
-            ? selectedPromptTemplateDefinition.placeholders.map((placeholder) => `{{${placeholder}}}`).join(", ")
+            ? selectedPromptTemplateDefinition.placeholders
+                .map((placeholder) => `{{${placeholder}}}`)
+                .join(", ")
             : "(none)"}
         </p>
         <TextField

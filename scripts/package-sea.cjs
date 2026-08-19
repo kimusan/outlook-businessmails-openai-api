@@ -104,7 +104,9 @@ function removeDigitalSignature(executablePath) {
  * via PowerShell. This avoids Emscripten / WebAssembly memory crashes in postject.
  */
 function injectViaPowerShell(executablePath, blobFilePath, sentinelFuse) {
-  process.stderr.write("Injecting SEA blob via Windows native Win32 UpdateResource (PowerShell)...\n");
+  process.stderr.write(
+    "Injecting SEA blob via Windows native Win32 UpdateResource (PowerShell)...\n"
+  );
 
   const psArgs = [
     "-NoProfile",
@@ -190,9 +192,8 @@ function injectViaPostject(executablePath, blobFilePath, sentinelFuse) {
       ];
     } else {
       const nodeDir = path.dirname(nodeExe);
-      const npmCmdPath = process.platform === "win32"
-        ? path.join(nodeDir, "npm.cmd")
-        : path.join(nodeDir, "npm");
+      const npmCmdPath =
+        process.platform === "win32" ? path.join(nodeDir, "npm.cmd") : path.join(nodeDir, "npm");
       postjectCommand = npmCmdPath;
       postjectCmdArgs = [
         "exec",
@@ -237,7 +238,9 @@ function verifySentinelFuse(executablePath, sentinelFuse) {
   }
 
   if (buf.includes(inactiveFuse)) {
-    throw new Error("Sentinel fuse was found but is inactive (:0). Injection did not activate the SEA blob.");
+    throw new Error(
+      "Sentinel fuse was found but is inactive (:0). Injection did not activate the SEA blob."
+    );
   }
 
   throw new Error(`Sentinel fuse '${sentinelFuse}' was not found in the executable.`);
@@ -257,7 +260,9 @@ async function injectSeaBlob(executablePath, blobFilePath) {
       verifySentinelFuse(executablePath, sentinelFuse);
       return;
     } catch (psError) {
-      process.stderr.write(`PowerShell injection failed (${psError.message}), falling back to postject...\n`);
+      process.stderr.write(
+        `PowerShell injection failed (${psError.message}), falling back to postject...\n`
+      );
     }
   }
 
@@ -268,7 +273,9 @@ async function injectSeaBlob(executablePath, blobFilePath) {
   } catch (postjectError) {
     // If postject failed on Windows, try PowerShell as fallback
     if (process.platform === "win32" && fs.existsSync(psInjectorScript)) {
-      process.stderr.write(`postject failed (${postjectError.message}), retrying via PowerShell Win32 injector...\n`);
+      process.stderr.write(
+        `postject failed (${postjectError.message}), retrying via PowerShell Win32 injector...\n`
+      );
       injectViaPowerShell(executablePath, blobFilePath, sentinelFuse);
       verifySentinelFuse(executablePath, sentinelFuse);
       return;

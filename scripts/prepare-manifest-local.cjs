@@ -38,9 +38,8 @@ function main() {
       /<AppDomain>https:\/\/localhost(?::\d+)?<\/AppDomain>/g,
       `<AppDomain>https://localhost:${port}</AppDomain>`
     )
-    .replace(
-      /https:\/\/localhost:\d+\/(?:taskpane|commands)\.html(?:[^"]*)?/g,
-      (url) => appendCacheBust(url)
+    .replace(/https:\/\/localhost:\d+\/(?:taskpane|commands)\.html(?:[^"]*)?/g, (url) =>
+      appendCacheBust(url)
     );
 
   fs.writeFileSync(outputManifestPath, rewritten, "utf8");

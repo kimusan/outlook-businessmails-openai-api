@@ -14,7 +14,9 @@ function readPackageVersion() {
 
 function ensureReleaseArtifacts() {
   if (!fs.existsSync(runtimeDir)) {
-    throw new Error(`Missing runtime directory: ${runtimeDir}. Run npm run package:local:win first.`);
+    throw new Error(
+      `Missing runtime directory: ${runtimeDir}. Run npm run package:local:win first.`
+    );
   }
 
   const requiredPaths = [
@@ -41,7 +43,9 @@ function ensureReleaseArtifacts() {
 
   if (missing.length > 0) {
     const missingText = missing.map((item) => `- ${item.relativePath}`).join("\n");
-    throw new Error(`Missing required release artifacts:\n${missingText}\nRun npm run package:local:win first.`);
+    throw new Error(
+      `Missing required release artifacts:\n${missingText}\nRun npm run package:local:win first.`
+    );
   }
 }
 

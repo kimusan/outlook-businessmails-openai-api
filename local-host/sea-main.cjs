@@ -52,7 +52,13 @@ function ensureDirectory(directoryPath) {
 
 const installDir = resolveInstallDir();
 const runtimeConfigPath = path.join(installDir, "host-config.json");
-const fallbackRuntimeConfigPath = path.resolve(__dirname, "..", "release", "local-host", "host-config.json");
+const fallbackRuntimeConfigPath = path.resolve(
+  __dirname,
+  "..",
+  "release",
+  "local-host",
+  "host-config.json"
+);
 let runtimeRootDir = installDir;
 let runtimeConfig = readJsonFile(runtimeConfigPath);
 
@@ -213,7 +219,6 @@ function sanitizeProxyRequestHeaders(input) {
     "content-length",
     "connection",
     "transfer-encoding",
-    "accept-encoding",
     "origin",
     "referer",
     "sec-fetch-mode",
@@ -374,7 +379,10 @@ function createRequestHandler(staticDir, port) {
 
     const absolutePath = path.resolve(staticDir, relativePath);
     const staticDirWithSeparator = `${path.resolve(staticDir)}${path.sep}`;
-    if (absolutePath !== path.resolve(staticDir) && !absolutePath.startsWith(staticDirWithSeparator)) {
+    if (
+      absolutePath !== path.resolve(staticDir) &&
+      !absolutePath.startsWith(staticDirWithSeparator)
+    ) {
       response.writeHead(403, { "Content-Type": "text/plain; charset=utf-8" });
       response.end("Forbidden");
       return;

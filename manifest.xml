@@ -62,36 +62,6 @@
                     <SourceLocation resid="Taskpane.ComposeUrl"/>
                   </Action>
                 </Control>
-                <Control xsi:type="Button" id="ComposeImproveButton">
-                  <Label resid="ComposeImproveButton.Label"/>
-                  <Supertip>
-                    <Title resid="ComposeImproveButton.Label"/>
-                    <Description resid="ComposeImproveButton.Tooltip"/>
-                  </Supertip>
-                  <Icon>
-                    <bt:Image size="16" resid="IconImprove.16x16"/>
-                    <bt:Image size="32" resid="IconImprove.32x32"/>
-                    <bt:Image size="80" resid="IconImprove.80x80"/>
-                  </Icon>
-                  <Action xsi:type="ShowTaskpane">
-                    <SourceLocation resid="Taskpane.ComposeImproveUrl"/>
-                  </Action>
-                </Control>
-                <Control xsi:type="Button" id="ComposeTranslateButton">
-                  <Label resid="ComposeTranslateButton.Label"/>
-                  <Supertip>
-                    <Title resid="ComposeTranslateButton.Label"/>
-                    <Description resid="ComposeTranslateButton.Tooltip"/>
-                  </Supertip>
-                  <Icon>
-                    <bt:Image size="16" resid="IconTranslate.16x16"/>
-                    <bt:Image size="32" resid="IconTranslate.32x32"/>
-                    <bt:Image size="80" resid="IconTranslate.80x80"/>
-                  </Icon>
-                  <Action xsi:type="ShowTaskpane">
-                    <SourceLocation resid="Taskpane.ComposeTranslateUrl"/>
-                  </Action>
-                </Control>
               </Group>
             </OfficeTab>
           </ExtensionPoint>     
@@ -114,36 +84,6 @@
                     <SourceLocation resid="Taskpane.SummaryUrl"/>
                   </Action>
                 </Control>
-                <Control xsi:type="Button" id="ReadTranslateButton">
-                  <Label resid="ReadTranslateButton.Label"/>
-                  <Supertip>
-                    <Title resid="ReadTranslateButton.Label"/>
-                    <Description resid="ReadTranslateButton.Tooltip"/>
-                  </Supertip>
-                  <Icon>
-                    <bt:Image size="16" resid="IconTranslate.16x16"/>
-                    <bt:Image size="32" resid="IconTranslate.32x32"/>
-                    <bt:Image size="80" resid="IconTranslate.80x80"/>
-                  </Icon>
-                  <Action xsi:type="ShowTaskpane">
-                    <SourceLocation resid="Taskpane.ReadTranslateUrl"/>
-                  </Action>
-                </Control>
-                <Control xsi:type="Button" id="ReadSummaryButton">
-                  <Label resid="ReadSummaryButton.Label"/>
-                  <Supertip>
-                    <Title resid="ReadSummaryButton.Label"/>
-                    <Description resid="ReadSummaryButton.Tooltip"/>
-                  </Supertip>
-                  <Icon>
-                    <bt:Image size="16" resid="IconSummary.16x16"/>
-                    <bt:Image size="32" resid="IconSummary.32x32"/>
-                    <bt:Image size="80" resid="IconSummary.80x80"/>
-                  </Icon>
-                  <Action xsi:type="ShowTaskpane">
-                    <SourceLocation resid="Taskpane.ReadSummaryUrl"/>
-                  </Action>
-                </Control>
               </Group>
             </OfficeTab>
           </ExtensionPoint> 
@@ -158,41 +98,21 @@
         <bt:Image id="IconAi.16x16" DefaultValue="https://localhost:3000/assets/ribbon-ai-16.png"/>
         <bt:Image id="IconAi.32x32" DefaultValue="https://localhost:3000/assets/ribbon-ai-32.png"/>
         <bt:Image id="IconAi.80x80" DefaultValue="https://localhost:3000/assets/ribbon-ai-80.png"/>
-        <bt:Image id="IconImprove.16x16" DefaultValue="https://localhost:3000/assets/ribbon-improve-16.png"/>
-        <bt:Image id="IconImprove.32x32" DefaultValue="https://localhost:3000/assets/ribbon-improve-32.png"/>
-        <bt:Image id="IconImprove.80x80" DefaultValue="https://localhost:3000/assets/ribbon-improve-80.png"/>
-        <bt:Image id="IconTranslate.16x16" DefaultValue="https://localhost:3000/assets/ribbon-translate-16.png"/>
-        <bt:Image id="IconTranslate.32x32" DefaultValue="https://localhost:3000/assets/ribbon-translate-32.png"/>
-        <bt:Image id="IconTranslate.80x80" DefaultValue="https://localhost:3000/assets/ribbon-translate-80.png"/>
-        <bt:Image id="IconSummary.16x16" DefaultValue="https://localhost:3000/assets/ribbon-summary-16.png"/>
-        <bt:Image id="IconSummary.32x32" DefaultValue="https://localhost:3000/assets/ribbon-summary-32.png"/>
-        <bt:Image id="IconSummary.80x80" DefaultValue="https://localhost:3000/assets/ribbon-summary-80.png"/>
       </bt:Images>
       <bt:Urls>
         <bt:Url id="Commands.Url" DefaultValue="https://localhost:3000/commands.html"/>
         <bt:Url id="Taskpane.ComposeUrl" DefaultValue="https://localhost:3000/taskpane.html?action=compose"/>
-        <bt:Url id="Taskpane.ComposeImproveUrl" DefaultValue="https://localhost:3000/taskpane.html?action=compose&amp;workflow=improveDraft&amp;scope=selection"/>
-        <bt:Url id="Taskpane.ComposeTranslateUrl" DefaultValue="https://localhost:3000/taskpane.html?action=compose&amp;workflow=translate&amp;scope=selection"/>
         <bt:Url id="Taskpane.SummaryUrl" DefaultValue="https://localhost:3000/taskpane.html?action=summary"/>
-        <bt:Url id="Taskpane.ReadTranslateUrl" DefaultValue="https://localhost:3000/taskpane.html?action=summary&amp;workflow=translate&amp;scope=selection"/>
-        <bt:Url id="Taskpane.ReadSummaryUrl" DefaultValue="https://localhost:3000/taskpane.html?action=summary&amp;workflow=summary&amp;scope=selection"/>
       </bt:Urls>
       <bt:ShortStrings>
         <bt:String id="GroupLabelCompose" DefaultValue="Outlook AI Assistant"/>
         <bt:String id="GroupLabelRead" DefaultValue="Outlook AI Assistant"/>
         <bt:String id="TaskpaneButton.Label" DefaultValue="AI Assistant"/>
-        <bt:String id="ComposeImproveButton.Label" DefaultValue="Improve selection/draft"/>
-        <bt:String id="ComposeTranslateButton.Label" DefaultValue="Translate selection/draft"/>
-        <bt:String id="ReadTranslateButton.Label" DefaultValue="Translate selection/message"/>
-        <bt:String id="ReadSummaryButton.Label" DefaultValue="Summarize selection/message"/>
       </bt:ShortStrings>
       <bt:LongStrings>
         <bt:String id="TaskpaneButton.Tooltip" DefaultValue="Open AI workflows to draft replies, improve drafts, summarize, and translate emails."/>
-        <bt:String id="ComposeImproveButton.Tooltip" DefaultValue="Open AI Assistant with improve-draft quick action. Uses selected text when available, otherwise full draft."/>
-        <bt:String id="ComposeTranslateButton.Tooltip" DefaultValue="Open AI Assistant with translate quick action. Uses selected text when available, otherwise full draft."/>
-        <bt:String id="ReadTranslateButton.Tooltip" DefaultValue="Open AI Assistant with translate quick action. Uses selected text when available, otherwise full message."/>
-        <bt:String id="ReadSummaryButton.Tooltip" DefaultValue="Open AI Assistant with summary quick action. Uses selected text when available, otherwise full message."/>
       </bt:LongStrings>
     </Resources>
   </VersionOverrides>
 </OfficeApp>
+

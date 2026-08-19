@@ -1,5 +1,6 @@
 import type { ChatMessage } from "./aiClient";
 import { limitWords } from "./outlookContext";
+import { containsHtmlMarkup } from "./richText";
 
 export type ToneOption = "neutral" | "friendly" | "formal" | "concise";
 export type FormalityOption = "balanced" | "informal" | "formal";
@@ -290,15 +291,14 @@ export function buildImproveDraftMessages(
 ): ChatMessage[] {
   const limitedDraft = limitWords(draftText, 1000);
   const merged = mergePromptTemplates(templates);
+  const systemContent = containsHtmlMarkup(draftText)
+    ? `${merged.improveDraftSystem}\n\n${HTML_PRESERVATION_RULE}`
+    : merged.improveDraftSystem;
 
   return [
     {
       role: "system",
-      content: merged.improveDraftSystem,
-    },
-    {
-      role: "system",
-      content: HTML_PRESERVATION_RULE,
+      content: systemContent,
     },
     {
       role: "user",
@@ -321,15 +321,14 @@ export function buildImproveReplyMessages(
   const limitedDraft = limitWords(draftText, 800);
   const limitedThread = limitWords(threadText, 1000);
   const merged = mergePromptTemplates(templates);
+  const systemContent = containsHtmlMarkup(draftText)
+    ? `${merged.improveReplySystem}\n\n${HTML_PRESERVATION_RULE}`
+    : merged.improveReplySystem;
 
   return [
     {
       role: "system",
-      content: merged.improveReplySystem,
-    },
-    {
-      role: "system",
-      content: HTML_PRESERVATION_RULE,
+      content: systemContent,
     },
     {
       role: "user",
@@ -349,15 +348,14 @@ export function buildTranslationMessages(
 ): ChatMessage[] {
   const limitedText = limitWords(text, 1500);
   const merged = mergePromptTemplates(templates);
+  const systemContent = containsHtmlMarkup(text)
+    ? `${merged.translationSystem}\n\n${HTML_PRESERVATION_RULE}`
+    : merged.translationSystem;
 
   return [
     {
       role: "system",
-      content: merged.translationSystem,
-    },
-    {
-      role: "system",
-      content: HTML_PRESERVATION_RULE,
+      content: systemContent,
     },
     {
       role: "user",

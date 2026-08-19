@@ -23,7 +23,11 @@ export default class Progress extends React.Component<ProgressProps> {
       if (title === undefined) {
         return <div></div>;
       } else {
-        return <h1 className="ms-fontSize-su ms-fontWeight-light ms-fontColor-neutralPrimary">{title}</h1>;
+        return (
+          <h1 className="ms-fontSize-su ms-fontWeight-light ms-fontColor-neutralPrimary">
+            {title}
+          </h1>
+        );
       }
     };
 

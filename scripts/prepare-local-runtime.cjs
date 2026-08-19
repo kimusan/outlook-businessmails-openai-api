@@ -50,9 +50,10 @@ function copyRuntimeScripts() {
 
   for (const fileName of scriptFilesToCopy) {
     const sourcePath = path.join(windowsScriptsDir, fileName);
-    const targetPath = fileName === "start-hidden.vbs"
-      ? path.join(outputDir, fileName)
-      : path.join(scriptOutputDir, fileName);
+    const targetPath =
+      fileName === "start-hidden.vbs"
+        ? path.join(outputDir, fileName)
+        : path.join(scriptOutputDir, fileName);
 
     if (!fs.existsSync(sourcePath)) {
       throw new Error(`Missing runtime helper script: ${sourcePath}`);

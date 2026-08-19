@@ -233,17 +233,79 @@ export function getTokenRefreshEndpoint(config: AiServiceConfig): string {
   return joinBaseUriAndPath(config.baseUri, config.tokenRefreshPath);
 }
 
+const TOKEN_CACHE_STORAGE_PREFIX = "outlookAiAssistant.tokenCache.";
+const TOKEN_CACHE_TTL_MS = 25 * 60 * 1000; // 25 minutes
+
 function buildCacheKey(config: AiServiceConfig): string {
   return `${config.baseUri.trim()}::${config.tokenRefreshPath.trim()}::${config.umsToken.trim()}`;
 }
 
 function getCachedAccessToken(config: AiServiceConfig): string | null {
-  const cached = accessTokenCache.get(buildCacheKey(config));
-  return cached && cached.trim() ? cached : null;
+  const key = buildCacheKey(config);
+  const memoryCached = accessTokenCache.get(key);
+  if (memoryCached && memoryCached.trim()) {
+    return memoryCached;
+  }
+
+  try {
+    if (typeof window !== "undefined" && window.sessionStorage) {
+      const storageKey = `${TOKEN_CACHE_STORAGE_PREFIX}${key}`;
+      const raw = window.sessionStorage.getItem(storageKey);
+      if (raw) {
+        const entry = JSON.parse(raw) as { token?: string; expiresAt?: number };
+        if (
+          entry &&
+          typeof entry.token === "string" &&
+          entry.token.trim() &&
+          typeof entry.expiresAt === "number" &&
+          Date.now() < entry.expiresAt
+        ) {
+          const validToken = entry.token.trim();
+          accessTokenCache.set(key, validToken);
+          return validToken;
+        }
+        window.sessionStorage.removeItem(storageKey);
+      }
+    }
+  } catch {
+    // Ignore storage read failures.
+  }
+
+  return null;
 }
 
 function cacheAccessToken(config: AiServiceConfig, accessToken: string): void {
-  accessTokenCache.set(buildCacheKey(config), accessToken.trim());
+  const key = buildCacheKey(config);
+  const trimmed = accessToken.trim();
+  accessTokenCache.set(key, trimmed);
+
+  try {
+    if (typeof window !== "undefined" && window.sessionStorage) {
+      const storageKey = `${TOKEN_CACHE_STORAGE_PREFIX}${key}`;
+      window.sessionStorage.setItem(
+        storageKey,
+        JSON.stringify({
+          token: trimmed,
+          expiresAt: Date.now() + TOKEN_CACHE_TTL_MS,
+        })
+      );
+    }
+  } catch {
+    // Ignore storage write failures.
+  }
+}
+
+export function clearCachedAccessToken(config: AiServiceConfig): void {
+  const key = buildCacheKey(config);
+  accessTokenCache.delete(key);
+
+  try {
+    if (typeof window !== "undefined" && window.sessionStorage) {
+      window.sessionStorage.removeItem(`${TOKEN_CACHE_STORAGE_PREFIX}${key}`);
+    }
+  } catch {
+    // Ignore storage clear failures.
+  }
 }
 
 function truncateForLog(input: string, maxLength: number): string {
@@ -589,57 +651,23 @@ function buildModelDisplayLabel(id: string, capabilities: string[]): string {
   return `${id} (${shown.join(", ")}${suffix})`;
 }
 
-function contentLooksLikePlanning(content: string): boolean {
-  const normalized = content.trim().toLowerCase();
-  if (!normalized) {
-    return false;
-  }
-
-  const planningPatterns = [
-    /^analy[sz]e\b/,
-    /^plan\b/,
-    /^i (will|can|am going to)\b/,
-    /^let'?s\b/,
-    /^here(?:'| i)s (my|the) plan\b/,
-    /^first,?\s/i,
-    /^step\s+\d+/,
-  ];
-
-  return planningPatterns.some((pattern) => pattern.test(normalized));
-}
-
 function stripThinkingBlocks(content: string): string {
   let output = content;
 
   output = output.replace(/<think\b[^>]*>[\s\S]*?<\/think>/gi, "");
+  output = output.replace(/<thought\b[^>]*>[\s\S]*?<\/thought>/gi, "");
+  output = output.replace(/<reflection\b[^>]*>[\s\S]*?<\/reflection>/gi, "");
   output = output.replace(/```(?:thinking|reasoning|analysis)[\s\S]*?```/gi, "");
 
   return output.trim();
 }
 
-function stripPlanningPreamble(content: string): string {
-  const planningLinePatterns = [
-    /^analy[sz]e\b/i,
-    /^plan\b/i,
-    /^i (will|can|am going to)\b/i,
-    /^let'?s\b/i,
-    /^here(?:'| i)s (my|the) plan\b/i,
-    /^first,?\s/i,
-    /^step\s+\d+\b/i,
-  ];
-
+function stripConversationalPreamble(content: string): string {
   const strippedThinking = stripThinkingBlocks(content);
-  const lines = strippedThinking.split(/\r?\n/);
-  let startIndex = 0;
+  const preambleRegex =
+    /^(?:(?:here (?:is|are) (?:the|your) (?:draft|reply|email|translation|summary|response)[^:\n]*:?\s*)|(?:sure(?: thing)?[!,.]?\s*(?:here(?:'s| is)[^:\n]*:?\s*)?)|(?:certainly[!,.]?\s*(?:here(?:'s| is)[^:\n]*:?\s*)?)|(?:below is (?:the|your)[^:\n]*:?\s*))\n*/i;
 
-  while (
-    startIndex < lines.length &&
-    planningLinePatterns.some((pattern) => pattern.test(lines[startIndex].trim()))
-  ) {
-    startIndex += 1;
-  }
-
-  return lines.slice(startIndex).join("\n").trim();
+  return strippedThinking.replace(preambleRegex, "").trim();
 }
 
 function normalizeChatContent(content: unknown): string {
@@ -733,28 +761,6 @@ function buildReasoningFollowUpMessages(
   };
 
   return [finalizeSystemMessage, finalizeUserMessage];
-}
-
-function buildFinalAnswerCleanupMessages(
-  originalMessages: ChatMessage[],
-  draftContent: string
-): ChatMessage[] {
-  const systemMessage: ChatMessage = {
-    role: "system",
-    content:
-      "You clean assistant drafts. Return only the final user-facing output. Remove planning text, analysis notes, and preambles. Keep links/formatting where relevant.",
-  };
-  const userMessage: ChatMessage = {
-    role: "user",
-    content:
-      "Original request context:\n" +
-      originalMessages.map((message) => `[${message.role}] ${message.content}`).join("\n\n") +
-      "\n\nDraft output to clean:\n" +
-      draftContent +
-      "\n\nReturn final answer only.",
-  };
-
-  return [systemMessage, userMessage];
 }
 
 function parseStreamedChatCompletionBody(
@@ -858,13 +864,16 @@ export async function refreshAccessToken(
         },
       });
     }
-
     return directApiKey;
   }
 
-  const cachedToken = forceRefresh ? null : getCachedAccessToken(config);
-  if (cachedToken) {
-    return cachedToken;
+  if (forceRefresh) {
+    clearCachedAccessToken(config);
+  } else {
+    const cachedToken = getCachedAccessToken(config);
+    if (cachedToken) {
+      return cachedToken;
+    }
   }
 
   const refreshEndpoint = getTokenRefreshEndpoint(config);
@@ -1572,31 +1581,6 @@ export async function createChatCompletion(
     });
   }
 
-  if (content && options?.allowFinalAnswerCleanup !== false && contentLooksLikePlanning(content)) {
-    const locallyCleaned = stripPlanningPreamble(content);
-    if (locallyCleaned && !contentLooksLikePlanning(locallyCleaned)) {
-      return locallyCleaned;
-    }
-
-    emitChatProgress(options, "finalAnswerCleanupStarted", {
-      contentPreview: truncateForLog(content, 160),
-    });
-
-    const cleanupMessages = buildFinalAnswerCleanupMessages(messages, content);
-    const cleaned = await createChatCompletion(config, cleanupMessages, {
-      ...options,
-      allowReasoningFollowUp: false,
-      allowFinalAnswerCleanup: false,
-    });
-
-    emitChatProgress(options, "finalAnswerCleanupCompleted", {
-      outputLength: cleaned.trim().length,
-    });
-
-    if (cleaned.trim()) {
-      return cleaned.trim();
-    }
-  }
-
-  return content.trim();
+  const cleaned = stripConversationalPreamble(content);
+  return cleaned || content.trim();
 }

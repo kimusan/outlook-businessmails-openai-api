@@ -37,7 +37,9 @@ function sendMessageToParent(message: ResultDialogOutgoingMessage): void {
 function applyPayload(payload: ResultDialogPayload): void {
   currentText = payload.text || "";
   titleNode.textContent = payload.title || "AI Result";
-  metaNode.textContent = `${payload.workflow} | ${payload.language} | ${new Date(payload.generatedAt).toLocaleString()}`;
+  metaNode.textContent = `${payload.workflow} | ${payload.language} | ${new Date(
+    payload.generatedAt
+  ).toLocaleString()}`;
   markupNode.innerHTML = formatStructuredTextAsHtml(currentText);
 }
 
