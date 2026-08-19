@@ -21,6 +21,7 @@ export interface AiServiceConfig {
   umsToken: string;
   apiKey: string;
   preferredLanguage: SupportedLanguage;
+  systemPromptFirst: boolean;
 }
 
 export const DEFAULT_AI_CONFIG: AiServiceConfig = {
@@ -35,6 +36,7 @@ export const DEFAULT_AI_CONFIG: AiServiceConfig = {
   umsToken: "",
   apiKey: "",
   preferredLanguage: "English",
+  systemPromptFirst: true,
 };
 
 const STORAGE_KEY = "outlookAiAssistant.aiConfig";
@@ -151,6 +153,10 @@ function normalizeConfig(
     ["English", "Korean", "Danish"].includes(input.preferredLanguage)
       ? input.preferredLanguage
       : DEFAULT_AI_CONFIG.preferredLanguage) as SupportedLanguage,
+    systemPromptFirst:
+      typeof input.systemPromptFirst === "boolean"
+        ? input.systemPromptFirst
+        : DEFAULT_AI_CONFIG.systemPromptFirst,
   };
 }
 

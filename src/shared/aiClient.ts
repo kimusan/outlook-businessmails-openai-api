@@ -1302,17 +1302,39 @@ export async function listAvailableModels(config: AiServiceConfig): Promise<Avai
   return result;
 }
 
+function ensureSystemPromptFirst(messages: ChatMessage[]): ChatMessage[] {
+  const systemMessages: ChatMessage[] = [];
+  const nonSystemMessages: ChatMessage[] = [];
+
+  for (const message of messages) {
+    if (message.role === "system") {
+      systemMessages.push(message);
+    } else {
+      nonSystemMessages.push(message);
+    }
+  }
+
+  if (systemMessages.length === 0) {
+    return messages;
+  }
+
+  return [...systemMessages, ...nonSystemMessages];
+}
+
 export async function createChatCompletion(
   config: AiServiceConfig,
   messages: ChatMessage[],
   options?: CreateChatCompletionOptions
 ): Promise<string> {
   const chatCompletionEndpoint = getChatCompletionEndpoint(config);
+  const processedMessages = config.systemPromptFirst
+    ? ensureSystemPromptFirst(messages)
+    : messages;
   const requestPayload = {
     model: config.model,
     temperature: config.temperature,
     stream: false,
-    messages,
+    messages: processedMessages,
   };
 
   emitChatProgress(options, "requestStarted", {

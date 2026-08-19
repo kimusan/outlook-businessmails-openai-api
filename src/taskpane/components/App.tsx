@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import {
+  Checkbox,
   DefaultButton,
   Dialog,
   DialogFooter,
@@ -1690,6 +1691,16 @@ export default function App(props: AppProps) {
                 return normalized.toFixed(1);
               }}
             />
+            <Checkbox
+              label="Place system prompt first in message sequence"
+              checked={config.systemPromptFirst}
+              onChange={(_ev, checked) => setConfig({ ...config, systemPromptFirst: checked ?? false })}
+            />
+            <p className="taskpane-config-state">
+              Enable this for models that require the system message at the beginning of the array
+              (e.g. Qwen models via vLLM). Required to resolve
+              &quot;System message must be at the beginning&quot; errors.
+            </p>
             <div className="taskpane-actions">
               <PrimaryButton onClick={onSaveConfig} disabled={isSavingConfig}>
                 Save configuration
