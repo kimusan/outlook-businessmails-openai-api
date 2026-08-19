@@ -8,7 +8,7 @@ const outputDir = path.join(rootDir, "release", "local-host");
 const outputExePath = path.join(outputDir, "OutlookAiLocalHost.exe");
 const SEA_FUSE_ID = "fce680ab2cc467b6e072b8b5df1996b2";
 const DEFAULT_SENTINEL_FUSE = `NODE_SEA_FUSE_${SEA_FUSE_ID}`;
-const DEFAULT_POSTJECT_PACKAGE = "postject@1.0.0-alpha.7";
+const DEFAULT_POSTJECT_PACKAGE = "postject@1.0.0-alpha.6";
 
 function resolveNodeExecutablePath() {
   if (process.env.SEA_NODE_EXE) {
@@ -50,26 +50,6 @@ function resolveSentinelFuse() {
 async function runPostject(executablePath, blobFilePath) {
   const blobBuffer = fs.readFileSync(blobFilePath);
   const sentinelFuse = resolveSentinelFuse();
-  let moduleInjectionError = null;
-
-  try {
-    const postject = require("postject");
-    if (postject && typeof postject.inject === "function") {
-      await postject.inject(executablePath, "NODE_SEA_BLOB", blobBuffer, {
-        sentinelFuse,
-        overwrite: true,
-      });
-      return;
-    }
-  } catch (error) {
-    moduleInjectionError = error;
-  }
-
-  if (moduleInjectionError && moduleInjectionError.code !== "MODULE_NOT_FOUND") {
-    process.stderr.write(
-      `postject module API failed (${moduleInjectionError.message}); trying CLI fallback...\n`
-    );
-  }
 
   const postjectArgs = [
     executablePath,
@@ -99,19 +79,13 @@ async function runPostject(executablePath, blobFilePath) {
   });
 
   if (result.error) {
-    const modulePart = moduleInjectionError && moduleInjectionError.code !== "MODULE_NOT_FOUND"
-      ? ` Module error: ${moduleInjectionError.message}.`
-      : "";
-    throw new Error(`postject execution failed to start: ${result.error.message}.${modulePart}`);
+    throw new Error(`postject execution failed to start: ${result.error.message}`);
   }
 
   if (result.status !== 0 || result.signal) {
     const exitCode = result.status === null ? "null" : String(result.status);
     const signal = result.signal ? `, signal ${result.signal}` : "";
-    const modulePart = moduleInjectionError && moduleInjectionError.code !== "MODULE_NOT_FOUND"
-      ? ` Module error: ${moduleInjectionError.message}.`
-      : "";
-    throw new Error(`postject failed with exit code ${exitCode}${signal}.${modulePart}`);
+    throw new Error(`postject failed with exit code ${exitCode}${signal}`);
   }
 }
 
