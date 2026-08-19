@@ -52,6 +52,12 @@ async function runPostject(executablePath, blobFilePath) {
   const sentinelFuse = resolveSentinelFuse();
   const nodeExe = resolveNodeExecutablePath();
 
+  process.stderr.write(`Using node.exe for postject: ${nodeExe}\n`);
+  const versionResult = spawnSync(nodeExe, ["-v"], { stdio: ["pipe", "pipe", "pipe"] });
+  if (versionResult.status === 0) {
+    process.stderr.write(`Node version: ${versionResult.stdout.toString().trim()}\n`);
+  }
+
   const postjectArgs = [
     executablePath,
     "NODE_SEA_BLOB",
@@ -62,20 +68,23 @@ async function runPostject(executablePath, blobFilePath) {
 
   // Try to use locally installed postject directly (avoids npm exec indirection
   // which can resolve a different node.exe from PATH).
-  const postjectBinPath = path.join(rootDir, "node_modules", ".bin", "postject.cmd");
   const postjectCliPath = path.join(rootDir, "node_modules", "postject", "dist", "cli.js");
+  const postjectBinPath = path.join(rootDir, "node_modules", ".bin", "postject.cmd");
 
   let postjectCommand;
   let postjectCmdArgs;
 
   if (fs.existsSync(postjectCliPath)) {
     // Use postject directly from node_modules via the local node.exe.
+    process.stderr.write(`Using local postject: ${postjectCliPath}\n`);
     postjectCommand = nodeExe;
     postjectCmdArgs = [postjectCliPath, ...postjectArgs];
   } else if (fs.existsSync(postjectBinPath)) {
+    process.stderr.write(`Using local postject bin: ${postjectBinPath}\n`);
     postjectCommand = postjectBinPath;
     postjectCmdArgs = [...postjectArgs];
   } else {
+    process.stderr.write("postject not found in node_modules, installing via npm...\n");
     // Fallback: install postject via npm exec using the same node.exe.
     const postjectPackage = process.env.POSTJECT_PACKAGE || DEFAULT_POSTJECT_PACKAGE;
     const npmExecPath = process.env.npm_execpath;
