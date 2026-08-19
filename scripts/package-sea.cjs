@@ -8,7 +8,7 @@ const outputDir = path.join(rootDir, "release", "local-host");
 const outputExePath = path.join(outputDir, "OutlookAiLocalHost.exe");
 const SEA_FUSE_ID = "fce680ab2cc467b6e072b8b5df1996b2";
 const DEFAULT_SENTINEL_FUSE = `NODE_SEA_FUSE_${SEA_FUSE_ID}`;
-const DEFAULT_POSTJECT_PACKAGE = "postject@1.0.0-alpha.6";
+const DEFAULT_POSTJECT_PACKAGE = "postject@1.0.0-alpha.7";
 
 function resolveNodeExecutablePath() {
   if (process.env.SEA_NODE_EXE) {
