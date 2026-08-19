@@ -86,12 +86,12 @@ async function runPostject(executablePath, blobFilePath) {
     const exitCode = result.status === null ? "null" : String(result.status);
     const signal = result.signal ? `, signal ${result.signal}` : "";
     const nodeVersion = process.version;
-    const isNode22Plus = /^v(?:22|23|24|25)/.test(nodeVersion);
+    const isNode22Plus = /^v(?:22|23|24|25|26)/.test(nodeVersion);
     const hint = isNode22Plus
-      ? `\n\nThis "Aborted()" error is a known incompatibility between postject and Node.js v22+.\n` +
-        `postject alpha.6 is compiled with Emscripten and crashes on Node.js >= 22.\n` +
-        `Workaround: run the build with Node.js v21, or set SEA_NODE_EXE to a v21 node.exe:\n\n` +
-        `  set SEA_NODE_EXE=C:\\path\\to\\node-v21\\node.exe\n` +
+      ? `\n\nThis "Aborted()" error is a known incompatibility between postject alpha.6 and Node.js v22+.\n` +
+        `postject is compiled with Emscripten and crashes on Node.js >= 22.\n` +
+        `Use Node.js v20 or v21 for the build (v20.20.1 works). Set SEA_NODE_EXE to point at a compatible node.exe:\n\n` +
+        `  set SEA_NODE_EXE=C:\\nodejs\\node.exe\n` +
         `  npm run package:local:win\n`
       : "";
     throw new Error(`postject failed with exit code ${exitCode}${signal}.${hint}`);
