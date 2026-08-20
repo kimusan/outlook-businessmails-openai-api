@@ -463,8 +463,10 @@ export default function App(props: AppProps) {
   const hasInitializedAutoSaveRef = React.useRef<boolean>(false);
   const selectionSnapshotRef = React.useRef<SelectionSnapshot | null>(null);
   const dialogRef = React.useRef<Office.Dialog | null>(null);
+  const currentDialogPayloadRef = React.useRef<ResultDialogPayload | null>(null);
   const activeRequestControllerRef = React.useRef<AbortController | null>(null);
   const isConfigReady = validateAiServiceConfig(config) === null;
+
 
   const showToast = React.useCallback((msg: string) => {
     if (toastTimeoutRef.current !== null) {
@@ -1034,6 +1036,7 @@ export default function App(props: AppProps) {
   };
 
   const postResultToDialog = (payload: ResultDialogPayload): boolean => {
+    currentDialogPayloadRef.current = payload;
     if (!dialogRef.current) {
       return false;
     }
@@ -1049,6 +1052,7 @@ export default function App(props: AppProps) {
   };
 
   const openOrUpdateResultDialog = async (payload: ResultDialogPayload) => {
+    currentDialogPayloadRef.current = payload;
     if (
       !Office.context ||
       !Office.context.ui ||
@@ -1095,7 +1099,9 @@ export default function App(props: AppProps) {
             }
 
             if (message.type === "ready") {
-              postResultToDialog(payload);
+              if (currentDialogPayloadRef.current) {
+                postResultToDialog(currentDialogPayloadRef.current);
+              }
               return;
             }
 
@@ -1113,12 +1119,17 @@ export default function App(props: AppProps) {
           });
 
           // Safety send in case the ready message is delayed.
-          window.setTimeout(() => postResultToDialog(payload), 250);
+          window.setTimeout(() => {
+            if (currentDialogPayloadRef.current) {
+              postResultToDialog(currentDialogPayloadRef.current);
+            }
+          }, 250);
           resolve();
         }
       );
     });
   };
+
 
   const presentResult = async (
     payload: ResultDialogPayload,
@@ -1326,6 +1337,17 @@ export default function App(props: AppProps) {
           });
         }
 
+        const initialTitle = "Generated reply draft";
+        const livePayload = createDialogPayload(
+          initialTitle,
+          getWorkflowLabel(activeWorkflow),
+          "Original",
+          ""
+        );
+        void openOrUpdateResultDialog(livePayload).catch((dialogErr) => {
+          logError("Initial dialog open failed", dialogErr);
+        });
+
         const output = await runAi(
           buildReplyDraftMessages(
             optimizedThread.text,
@@ -1334,11 +1356,17 @@ export default function App(props: AppProps) {
             formality,
             length,
             config.promptTemplates
-          )
+          ),
+          (_delta, accumulated) => {
+            postResultToDialog({
+              ...livePayload,
+              text: accumulated,
+            });
+          }
         );
         await presentResult(
           createDialogPayload(
-            "Generated reply draft",
+            initialTitle,
             getWorkflowLabel(activeWorkflow),
             "Original",
             output
@@ -1369,6 +1397,17 @@ export default function App(props: AppProps) {
           });
         }
 
+        const initialTitle = source.usedSelection ? "Improved selected text" : "Improved draft";
+        const livePayload = createDialogPayload(
+          initialTitle,
+          getWorkflowLabel(activeWorkflow),
+          "Original",
+          ""
+        );
+        void openOrUpdateResultDialog(livePayload).catch((dialogErr) => {
+          logError("Initial dialog open failed", dialogErr);
+        });
+
         const output = await runAi(
           buildImproveDraftMessages(
             optimizedDraft.text,
@@ -1376,11 +1415,17 @@ export default function App(props: AppProps) {
             formality,
             length,
             config.promptTemplates
-          )
+          ),
+          (_delta, accumulated) => {
+            postResultToDialog({
+              ...livePayload,
+              text: accumulated,
+            });
+          }
         );
         await presentResult(
           createDialogPayload(
-            source.usedSelection ? "Improved selected text" : "Improved draft",
+            initialTitle,
             getWorkflowLabel(activeWorkflow),
             "Original",
             output
@@ -1420,6 +1465,17 @@ export default function App(props: AppProps) {
           });
         }
 
+        const initialTitle = "Improved reply draft";
+        const livePayload = createDialogPayload(
+          initialTitle,
+          getWorkflowLabel(activeWorkflow),
+          "Original",
+          ""
+        );
+        void openOrUpdateResultDialog(livePayload).catch((dialogErr) => {
+          logError("Initial dialog open failed", dialogErr);
+        });
+
         const output = await runAi(
           buildImproveReplyMessages(
             optimizedDraft.text,
@@ -1428,11 +1484,17 @@ export default function App(props: AppProps) {
             formality,
             length,
             config.promptTemplates
-          )
+          ),
+          (_delta, accumulated) => {
+            postResultToDialog({
+              ...livePayload,
+              text: accumulated,
+            });
+          }
         );
         await presentResult(
           createDialogPayload(
-            "Improved reply draft",
+            initialTitle,
             getWorkflowLabel(activeWorkflow),
             "Original",
             output
@@ -1461,12 +1523,29 @@ export default function App(props: AppProps) {
           });
         }
 
+        const initialTitle = source.usedSelection ? "Action items (selection)" : "Action items & deadlines";
+        const livePayload = createDialogPayload(
+          initialTitle,
+          getWorkflowLabel(activeWorkflow),
+          targetLanguage,
+          ""
+        );
+        void openOrUpdateResultDialog(livePayload).catch((dialogErr) => {
+          logError("Initial dialog open failed", dialogErr);
+        });
+
         const output = await runAi(
-          buildActionItemsMessages(optimizedSource.text, targetLanguage)
+          buildActionItemsMessages(optimizedSource.text, targetLanguage),
+          (_delta, accumulated) => {
+            postResultToDialog({
+              ...livePayload,
+              text: accumulated,
+            });
+          }
         );
         await presentResult(
           createDialogPayload(
-            source.usedSelection ? "Action items (selection)" : "Action items & deadlines",
+            initialTitle,
             getWorkflowLabel(activeWorkflow),
             targetLanguage,
             output
@@ -1492,16 +1571,33 @@ export default function App(props: AppProps) {
           });
         }
 
+        const initialTitle = source.usedSelection ? "Summary of selected text" : "Summary of email";
+        const livePayload = createDialogPayload(
+          initialTitle,
+          getWorkflowLabel(activeWorkflow),
+          config.preferredLanguage,
+          ""
+        );
+        void openOrUpdateResultDialog(livePayload).catch((dialogErr) => {
+          logError("Initial dialog open failed", dialogErr);
+        });
+
         const output = await runAi(
           buildSummaryMessages(
             optimizedSummarySource.text,
             config.preferredLanguage,
             config.promptTemplates
-          )
+          ),
+          (_delta, accumulated) => {
+            postResultToDialog({
+              ...livePayload,
+              text: accumulated,
+            });
+          }
         );
         await presentResult(
           createDialogPayload(
-            source.usedSelection ? "Summary of selected text" : "Summary of email",
+            initialTitle,
             getWorkflowLabel(activeWorkflow),
             config.preferredLanguage,
             output
@@ -1571,16 +1667,33 @@ export default function App(props: AppProps) {
           });
         }
 
+        const initialTitle = source.usedSelection ? "Translation of selected text" : "Translation of email";
+        const livePayload = createDialogPayload(
+          initialTitle,
+          getWorkflowLabel(activeWorkflow),
+          targetLanguage,
+          ""
+        );
+        void openOrUpdateResultDialog(livePayload).catch((dialogErr) => {
+          logError("Initial dialog open failed", dialogErr);
+        });
+
         const output = await runAi(
           buildTranslationMessages(
             optimizedTranslationSource.text,
             targetLanguage,
             config.promptTemplates
-          )
+          ),
+          (_delta, accumulated) => {
+            postResultToDialog({
+              ...livePayload,
+              text: accumulated,
+            });
+          }
         );
         await presentResult(
           createDialogPayload(
-            source.usedSelection ? "Translation of selected text" : "Translation of email",
+            initialTitle,
             getWorkflowLabel(activeWorkflow),
             targetLanguage,
             output
@@ -2164,8 +2277,17 @@ export default function App(props: AppProps) {
             {hasActiveRequest && (
               <div className="taskpane-markup-preview">
                 <div className="taskpane-markup">
-                  {streamingResultText || "Connecting to AI model..."}
-                  <span className="streaming-cursor" />
+                  {streamingResultText ? (
+                    <>
+                      {streamingResultText}
+                      <span className="streaming-cursor" />
+                    </>
+                  ) : (
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", color: "var(--app-muted, #6b7280)", fontStyle: "italic" }}>
+                      <span className="streaming-cursor" />
+                      <span>{statusText || "Contacting AI model & generating response..."}</span>
+                    </div>
+                  )}
                 </div>
               </div>
             )}

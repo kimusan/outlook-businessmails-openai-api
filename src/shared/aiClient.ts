@@ -1118,10 +1118,13 @@ async function fetchWithAuth(
   const requestAttempts: RequestAttemptDebug[] = [];
 
   const execute = async (accessToken: string): Promise<FetchWithAuthResult> => {
+    const isStream = Boolean(request.requestPayloadSummary?.stream);
     const requestHeaders: Record<string, string> = {
       ...(request.method === "POST" ? { "Content-Type": "application/json" } : {}),
+      Accept: isStream ? "text/event-stream, application/json" : "application/json",
       Authorization: `Bearer ${accessToken}`,
     };
+
     const networkDiagnostics = buildNetworkDiagnostics(request.url);
     let fetchContext: FetchExecutionContext = {
       fetchMode: "cors",

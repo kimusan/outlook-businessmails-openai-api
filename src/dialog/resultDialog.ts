@@ -40,7 +40,12 @@ function applyPayload(payload: ResultDialogPayload): void {
   metaNode.textContent = `${payload.workflow} | ${payload.language} | ${new Date(
     payload.generatedAt
   ).toLocaleString()}`;
-  markupNode.innerHTML = formatStructuredTextAsHtml(currentText);
+  if (!currentText.trim()) {
+    markupNode.innerHTML =
+      '<p style="color: #6b7280; font-style: italic;">Contacting AI model &amp; generating response...</p>';
+  } else {
+    markupNode.innerHTML = formatStructuredTextAsHtml(currentText);
+  }
 }
 
 function parsePayload(rawMessage: string): ResultDialogPayload | null {
