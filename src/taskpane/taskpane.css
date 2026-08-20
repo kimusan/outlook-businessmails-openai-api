@@ -523,3 +523,58 @@ body {
   50% { opacity: 0; }
 }
 
+.taskpane-inline-kbd {
+  display: inline-block;
+  padding: 1px 5px;
+  font-size: 10px;
+  font-family: inherit;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--app-muted);
+  background: var(--app-surface);
+  border: 1px solid var(--app-border);
+  border-radius: 4px;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+
+.shortcuts-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 10px;
+}
+
+.shortcuts-table tr {
+  border-bottom: 1px solid var(--app-border);
+}
+
+.shortcuts-table tr:last-child {
+  border-bottom: none;
+}
+
+.shortcuts-table td {
+  padding: 8px 6px;
+  font-size: 13px;
+  color: var(--app-text);
+  vertical-align: middle;
+}
+
+.shortcuts-table td:first-child {
+  white-space: nowrap;
+  width: 42%;
+}
+
+.shortcuts-table kbd {
+  display: inline-block;
+  padding: 2px 6px;
+  font-size: 11px;
+  font-family: inherit;
+  font-weight: 600;
+  color: var(--app-text);
+  background: var(--app-surface);
+  border: 1px solid var(--app-border);
+  border-radius: 4px;
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.08);
+}
+
+

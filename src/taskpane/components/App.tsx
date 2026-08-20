@@ -444,8 +444,10 @@ export default function App(props: AppProps) {
   const [debugLog, setDebugLog] = React.useState<string[]>([]);
   const [isDebugVisible, setIsDebugVisible] = React.useState<boolean>(false);
   const [isPromptEditorVisible, setIsPromptEditorVisible] = React.useState<boolean>(false);
+  const [isShortcutsVisible, setIsShortcutsVisible] = React.useState<boolean>(false);
   const [selectedPromptTemplateKey, setSelectedPromptTemplateKey] =
     React.useState<PromptTemplateKey>("replyDraftSystem");
+
   const [isLoading, setIsLoading] = React.useState<boolean>(false);
   const [isSavingConfig, setIsSavingConfig] = React.useState<boolean>(false);
   const [isCheckingApi, setIsCheckingApi] = React.useState<boolean>(false);
@@ -1812,6 +1814,11 @@ export default function App(props: AppProps) {
 
   React.useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      const isInput =
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement ||
+        (e.target instanceof HTMLElement && e.target.isContentEditable);
+
       if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
         e.preventDefault();
         if (!isLoading && !hasActiveRequest && isConfigReady) {
@@ -1827,8 +1834,27 @@ export default function App(props: AppProps) {
         if (resultText) {
           void onCopyResult();
         }
+      } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "I" || e.key === "i")) {
+        e.preventDefault();
+        if (hostMode === "compose" && resultText) {
+          void onInsertAtCursor();
+        }
+      } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "S" || e.key === "s")) {
+        e.preventDefault();
+        if (hostMode === "compose" && !isSuggestingSubject && !hasActiveRequest && isConfigReady) {
+          void onSuggestSubject();
+        }
+      } else if (e.key === "?" && !isInput && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        setIsShortcutsVisible((prev) => !prev);
       } else if (e.key === "Escape") {
-        if (hasActiveRequest) {
+        if (isShortcutsVisible) {
+          setIsShortcutsVisible(false);
+        } else if (isPromptEditorVisible) {
+          setIsPromptEditorVisible(false);
+        } else if (isConfigVisible) {
+          setIsConfigVisible(false);
+        } else if (hasActiveRequest) {
           onCancelActiveRequest();
         }
       }
@@ -1848,6 +1874,10 @@ export default function App(props: AppProps) {
     formality,
     length,
     targetLanguage,
+    isSuggestingSubject,
+    isShortcutsVisible,
+    isPromptEditorVisible,
+    isConfigVisible,
   ]);
 
   return (
@@ -1859,6 +1889,13 @@ export default function App(props: AppProps) {
             {!isConfigReady && (
               <span className="taskpane-pill taskpane-pill-warning">Configuration missing</span>
             )}
+            <DefaultButton
+              className="taskpane-icon-button"
+              iconProps={{ iconName: "Help" }}
+              title="Keyboard shortcuts (?)"
+              ariaLabel="Keyboard shortcuts"
+              onClick={() => setIsShortcutsVisible(true)}
+            />
             <DefaultButton
               className="taskpane-icon-button"
               iconProps={{ iconName: "Bug" }}
@@ -1875,6 +1912,7 @@ export default function App(props: AppProps) {
             />
           </div>
         </div>
+
 
         {isConfigVisible && (
           <div className="taskpane-section taskpane-config">
@@ -2112,8 +2150,7 @@ export default function App(props: AppProps) {
             ))}
           </div>
           <p className="taskpane-config-state">
-            Tap a workflow button to run. Translation uses a two-step flow to let you choose
-            language first.
+            Tap a workflow button to run, or press <kbd className="taskpane-inline-kbd">Ctrl+Enter</kbd> to run the selected workflow.
           </p>
         </div>
 
@@ -2315,11 +2352,13 @@ export default function App(props: AppProps) {
                 {hostMode === "compose" && (
                   <div className="taskpane-actions">
                     <PrimaryButton onClick={onApplyToDraft} title="Replace draft (Ctrl+Shift+R)">
-                      Replace draft
+                      Replace draft <span className="taskpane-inline-kbd">Ctrl+Shift+R</span>
                     </PrimaryButton>
-                    <DefaultButton onClick={onInsertAtCursor}>Insert at cursor</DefaultButton>
+                    <DefaultButton onClick={onInsertAtCursor} title="Insert at cursor (Ctrl+Shift+I)">
+                      Insert at cursor <span className="taskpane-inline-kbd">Ctrl+Shift+I</span>
+                    </DefaultButton>
                     <DefaultButton onClick={onCopyResult} title="Copy to clipboard (Ctrl+Shift+C)">
-                      Copy
+                      Copy <span className="taskpane-inline-kbd">Ctrl+Shift+C</span>
                     </DefaultButton>
                   </div>
                 )}
@@ -2468,8 +2507,59 @@ export default function App(props: AppProps) {
           <PrimaryButton onClick={() => setIsPromptEditorVisible(false)} text="Done" />
         </DialogFooter>
       </Dialog>
+      <Dialog
+        hidden={!isShortcutsVisible}
+        onDismiss={() => setIsShortcutsVisible(false)}
+        dialogContentProps={{
+          type: DialogType.normal,
+          title: "Keyboard Shortcuts",
+          subText: "Speed up your workflow with these keyboard shortcuts in the taskpane:",
+        }}
+        minWidth={460}
+        modalProps={{ isBlocking: false }}
+      >
+        <table className="shortcuts-table">
+          <tbody>
+            <tr>
+              <td><kbd>Ctrl</kbd> + <kbd>Enter</kbd></td>
+              <td>Run currently selected workflow</td>
+            </tr>
+            <tr>
+              <td><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>R</kbd></td>
+              <td>Replace email draft with AI result</td>
+            </tr>
+            <tr>
+              <td><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>C</kbd></td>
+              <td>Copy AI result to clipboard</td>
+            </tr>
+            <tr>
+              <td><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>I</kbd></td>
+              <td>Insert AI result at cursor</td>
+            </tr>
+            <tr>
+              <td><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>S</kbd></td>
+              <td>Suggest subject lines (compose mode)</td>
+            </tr>
+            <tr>
+              <td><kbd>Escape</kbd></td>
+              <td>Cancel active AI request / close dialogs</td>
+            </tr>
+            <tr>
+              <td><kbd>?</kbd></td>
+              <td>Open this keyboard shortcuts cheat sheet</td>
+            </tr>
+          </tbody>
+        </table>
+        <p className="taskpane-config-state" style={{ marginTop: "12px" }}>
+          On macOS, use <kbd>Cmd</kbd> instead of <kbd>Ctrl</kbd>.
+        </p>
+        <DialogFooter>
+          <PrimaryButton onClick={() => setIsShortcutsVisible(false)} text="Got it" />
+        </DialogFooter>
+      </Dialog>
       {toastMessage && <div className="taskpane-toast">{toastMessage}</div>}
     </div>
   );
 }
+
 
