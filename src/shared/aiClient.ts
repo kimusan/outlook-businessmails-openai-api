@@ -1356,14 +1356,14 @@ function ensureSystemPromptFirst(messages: ChatMessage[]): ChatMessage[] {
   return [...systemMessages, ...nonSystemMessages];
 }
 
-export async function createChatCompletion(
+async function executeChatCompletionRequest(
   config: AiServiceConfig,
   messages: ChatMessage[],
-  options?: CreateChatCompletionOptions
+  options: CreateChatCompletionOptions | undefined,
+  isStreaming: boolean
 ): Promise<string> {
   const chatCompletionEndpoint = getChatCompletionEndpoint(config);
   const processedMessages = config.systemPromptFirst ? ensureSystemPromptFirst(messages) : messages;
-  const isStreaming = typeof options?.onDelta === "function";
   const requestPayload = {
     model: config.model,
     temperature: config.temperature,
@@ -1410,6 +1410,7 @@ export async function createChatCompletion(
     const decoder = new TextDecoder("utf-8");
     let buffer = "";
     let accumulatedContent = "";
+    let rawText = "";
 
     try {
       while (true) {
@@ -1427,16 +1428,21 @@ export async function createChatCompletion(
           break;
         }
 
-        buffer += decoder.decode(value, { stream: true });
+        const chunkText = decoder.decode(value, { stream: true });
+        rawText += chunkText;
+        buffer += chunkText;
         const lines = buffer.split(/\r?\n/);
         buffer = lines.pop() || "";
 
         for (const line of lines) {
           const trimmed = line.trim();
-          if (!trimmed.startsWith("data:")) {
+          if (!trimmed) {
             continue;
           }
-          const dataStr = trimmed.slice(5).trimStart();
+          let dataStr = trimmed;
+          if (trimmed.startsWith("data:")) {
+            dataStr = trimmed.slice(5).trimStart();
+          }
           if (!dataStr || dataStr === "[DONE]") {
             continue;
           }
@@ -1445,7 +1451,7 @@ export async function createChatCompletion(
             const parsed = JSON.parse(dataStr) as ChatCompletionResponse;
             const choice = parsed.choices?.[0];
             const delta = choice?.delta;
-            const textChunk = delta?.content || choice?.text || "";
+            const textChunk = delta?.content || choice?.message?.content || choice?.text || "";
             const deltaContent =
               typeof textChunk === "string" ? textChunk : normalizeChatContent(textChunk);
 
@@ -1465,13 +1471,61 @@ export async function createChatCompletion(
           }
         }
       }
-    } catch {
-      if (options?.signal?.aborted) {
+    } catch (err) {
+      if (options?.signal?.aborted || isAbortError(err)) {
         throw new Error("Request cancelled by user.");
+      }
+      throw err;
+    }
+
+    if (buffer.trim()) {
+      const trimmed = buffer.trim();
+      let dataStr = trimmed;
+      if (trimmed.startsWith("data:")) {
+        dataStr = trimmed.slice(5).trimStart();
+      }
+      if (dataStr && dataStr !== "[DONE]") {
+        try {
+          const parsed = JSON.parse(dataStr) as ChatCompletionResponse;
+          const choice = parsed.choices?.[0];
+          const delta = choice?.delta;
+          const textChunk = delta?.content || choice?.message?.content || choice?.text || "";
+          const deltaContent =
+            typeof textChunk === "string" ? textChunk : normalizeChatContent(textChunk);
+          if (deltaContent) {
+            accumulatedContent += deltaContent;
+            if (options?.onDelta) {
+              options.onDelta(deltaContent, accumulatedContent);
+            }
+          }
+        } catch {
+          // Ignore
+        }
+      }
+    }
+
+    if (!accumulatedContent && rawText.trim()) {
+      try {
+        const parsed = JSON.parse(rawText.trim()) as ChatCompletionResponse;
+        if (parsed.error?.message) {
+          throw new Error(parsed.error.message);
+        }
+        const parsedContent = extractTextFromChatCompletionPayload(parsed);
+        if (parsedContent) {
+          accumulatedContent = parsedContent;
+          if (options?.onDelta) {
+            options.onDelta(accumulatedContent, accumulatedContent);
+          }
+        }
+      } catch (err) {
+        if (err instanceof Error && !err.message.includes("JSON")) {
+          throw err;
+        }
       }
     }
 
     content = accumulatedContent;
+    responseBody = rawText;
   } else {
     responseBody = await parseResponseBody(response);
     streamedResult = parseStreamedChatCompletionBody(responseBody);
@@ -1694,4 +1748,30 @@ export async function createChatCompletion(
 
   const cleaned = stripConversationalPreamble(content);
   return cleaned || content.trim();
+}
+
+export async function createChatCompletion(
+  config: AiServiceConfig,
+  messages: ChatMessage[],
+  options?: CreateChatCompletionOptions
+): Promise<string> {
+  const isStreaming = typeof options?.onDelta === "function";
+
+  if (isStreaming) {
+    try {
+      return await executeChatCompletionRequest(config, messages, options, true);
+    } catch (streamError) {
+      if (options?.signal?.aborted || isAbortError(streamError)) {
+        throw streamError;
+      }
+      // If streaming failed or model endpoint doesn't support SSE, fallback to standard non-streaming
+      const nonStreamResult = await executeChatCompletionRequest(config, messages, options, false);
+      if (options?.onDelta && nonStreamResult) {
+        options.onDelta(nonStreamResult, nonStreamResult);
+      }
+      return nonStreamResult;
+    }
+  }
+
+  return await executeChatCompletionRequest(config, messages, options, false);
 }

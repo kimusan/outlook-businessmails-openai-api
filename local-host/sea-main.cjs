@@ -326,9 +326,8 @@ async function handleProxyFetch(request, response) {
 
   const contentType = String(upstreamResponse.headers.get("content-type") || "").toLowerCase();
   const isSseStream = contentType.includes("text/event-stream");
-  const wantsStream = Boolean(payload && payload.stream);
 
-  if ((isSseStream || wantsStream) && upstreamResponse.ok && upstreamResponse.body) {
+  if (isSseStream && upstreamResponse.ok && upstreamResponse.body) {
     response.writeHead(upstreamResponse.status, {
       "Content-Type": "text/event-stream; charset=utf-8",
       "Cache-Control": "no-cache, no-transform",

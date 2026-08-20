@@ -1160,8 +1160,13 @@ export default function App(props: AppProps) {
       return next;
     });
     setSelectedHistoryEntryId(historyEntry.id);
-    await openOrUpdateResultDialog(payload);
+    try {
+      await openOrUpdateResultDialog(payload);
+    } catch (dialogError) {
+      logError("Opening result dialog window failed (result displayed in task pane)", dialogError);
+    }
   };
+
 
   const onOpenHistoryEntry = async (entry: ResultHistoryEntry): Promise<void> => {
     try {
