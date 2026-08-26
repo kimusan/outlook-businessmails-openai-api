@@ -1,6 +1,7 @@
 import type { ChatMessage } from "./aiClient";
 import { limitWords } from "./outlookContext";
 import { containsHtmlMarkup } from "./richText";
+import type { CustomPreset } from "./customPresets";
 
 export type ToneOption = "neutral" | "friendly" | "formal" | "concise";
 export type FormalityOption = "balanced" | "informal" | "formal";
@@ -467,6 +468,47 @@ export function buildActionItemsMessages(
         "## Open Questions & Blockers\n" +
         "- Unresolved items or questions needing response\n\n" +
         `Email content:\n${limitedText}`,
+    },
+  ];
+}
+
+export function buildCustomPresetMessages(
+  preset: CustomPreset,
+  sourceText: string,
+  threadContext: string,
+  outputLanguage: SupportedLanguage,
+  direction?: string,
+  tone?: ToneOption,
+  formality?: FormalityOption,
+  length?: LengthOption
+): ChatMessage[] {
+  const limitedSource = limitWords(sourceText, 1500);
+  const limitedThread = threadContext ? limitWords(threadContext, 1200) : "";
+  const styleStr = tone && formality && length ? formatStyle(tone, formality, length) : "";
+
+  const renderedUser = preset.userPromptTemplate
+    .replace(/{{\s*source\s*}}/g, limitedSource)
+    .replace(/{{\s*text\s*}}/g, limitedSource)
+    .replace(/{{\s*draft\s*}}/g, limitedSource)
+    .replace(/{{\s*thread_context\s*}}/g, limitedThread)
+    .replace(/{{\s*thread\s*}}/g, limitedThread)
+    .replace(/{{\s*output_language\s*}}/g, outputLanguage)
+    .replace(/{{\s*target_language\s*}}/g, outputLanguage)
+    .replace(/{{\s*direction\s*}}/g, direction || "(none)")
+    .replace(/{{\s*style\s*}}/g, styleStr);
+
+  const systemContent = containsHtmlMarkup(sourceText)
+    ? `${preset.systemPrompt}\n\n${HTML_PRESERVATION_RULE}`
+    : preset.systemPrompt;
+
+  return [
+    {
+      role: "system",
+      content: systemContent,
+    },
+    {
+      role: "user",
+      content: renderedUser,
     },
   ];
 }

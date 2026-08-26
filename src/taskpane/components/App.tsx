@@ -32,6 +32,10 @@ import {
   setComposeBodyHtml,
   setComposeBodyText,
   splitDraftAndThread,
+  getEmailAttachments,
+  getCurrentUserProfile,
+  detectTextLanguage,
+  buildEnrichedThreadContext,
 } from "../../shared/outlookContext";
 import {
   buildChatMessages,
@@ -42,6 +46,7 @@ import {
   buildTranslationMessages,
   buildSubjectLineMessages,
   buildActionItemsMessages,
+  buildCustomPresetMessages,
   DEFAULT_PROMPT_TEMPLATES,
   FormalityOption,
   LengthOption,
@@ -51,6 +56,14 @@ import {
   ToneOption,
 } from "../../shared/promptBuilders";
 import {
+  AVAILABLE_PRESET_ICONS,
+  CustomPreset,
+  DEFAULT_CUSTOM_PRESETS,
+  mergeCustomPresets,
+  validateCustomPreset,
+} from "../../shared/customPresets";
+
+import {
   AuthMode,
   AiServiceConfig,
   DEFAULT_AI_CONFIG,
@@ -59,6 +72,7 @@ import {
   saveAiServiceConfig,
   validateAiServiceConfig,
 } from "../../shared/aiConfig";
+
 import {
   AvailableModel,
   createChatCompletion,
@@ -85,7 +99,9 @@ type Workflow =
   | "improveReplyDraft"
   | "translate"
   | "summary"
-  | "actionItems";
+  | "actionItems"
+  | `preset:${string}`;
+
 type ContentScope = "body" | "selection";
 type SelectionSnapshot = {
   itemId: string;
@@ -360,7 +376,7 @@ function detectInitialWorkflow(hostMode: HostMode): Workflow {
   return "replyDraft";
 }
 
-function getWorkflowLabel(workflow: Workflow): string {
+function getWorkflowLabel(workflow: Workflow, customPresets?: CustomPreset[]): string {
   if (workflow === "replyDraft") {
     return "Draft reply";
   }
@@ -377,8 +393,23 @@ function getWorkflowLabel(workflow: Workflow): string {
     return "Summarize";
   }
 
-  return "Translate";
+  if (workflow === "actionItems") {
+    return "Action items";
+  }
+
+  if (workflow === "translate") {
+    return "Translate";
+  }
+
+  if (workflow.startsWith("preset:")) {
+    const presetId = workflow.slice(7);
+    const found = customPresets?.find((p) => p.id === presetId);
+    return found ? found.label : "Custom Preset";
+  }
+
+  return workflow;
 }
+
 
 function parseDialogMessage(raw: string): ResultDialogOutgoingMessage | null {
   try {
@@ -444,9 +475,17 @@ export default function App(props: AppProps) {
   const [debugLog, setDebugLog] = React.useState<string[]>([]);
   const [isDebugVisible, setIsDebugVisible] = React.useState<boolean>(false);
   const [isPromptEditorVisible, setIsPromptEditorVisible] = React.useState<boolean>(false);
+
   const [isShortcutsVisible, setIsShortcutsVisible] = React.useState<boolean>(false);
   const [selectedPromptTemplateKey, setSelectedPromptTemplateKey] =
     React.useState<PromptTemplateKey>("replyDraftSystem");
+  const [isPresetManagerVisible, setIsPresetManagerVisible] = React.useState<boolean>(false);
+  const [editingPreset, setEditingPreset] = React.useState<CustomPreset | null>(null);
+  const [isEditingNewPreset, setIsEditingNewPreset] = React.useState<boolean>(false);
+  const [presetEditorError, setPresetEditorError] = React.useState<string>("");
+  const [detectedEmailLanguage, setDetectedEmailLanguage] = React.useState<string>("");
+
+
 
   const [isLoading, setIsLoading] = React.useState<boolean>(false);
   const [isSavingConfig, setIsSavingConfig] = React.useState<boolean>(false);
@@ -1339,10 +1378,26 @@ export default function App(props: AppProps) {
           });
         }
 
+        const metadata = await getEmailMetadata();
+        const attachments = await getEmailAttachments();
+        const userProfile = getCurrentUserProfile();
+        const enrichedThread = buildEnrichedThreadContext(
+          optimizedThread.text,
+          metadata,
+          attachments,
+          userProfile
+        );
+
+        const detectedLang = detectTextLanguage(threadText);
+        if (detectedLang && detectedLang !== "English") {
+          setDetectedEmailLanguage(detectedLang);
+          appendDebugLog("Detected thread language", { language: detectedLang });
+        }
+
         const initialTitle = "Generated reply draft";
         const livePayload = createDialogPayload(
           initialTitle,
-          getWorkflowLabel(activeWorkflow),
+          getWorkflowLabel(activeWorkflow, config.customPresets),
           "Original",
           ""
         );
@@ -1352,7 +1407,7 @@ export default function App(props: AppProps) {
 
         const output = await runAi(
           buildReplyDraftMessages(
-            optimizedThread.text,
+            enrichedThread,
             direction.trim(),
             tone,
             formality,
@@ -1369,7 +1424,7 @@ export default function App(props: AppProps) {
         await presentResult(
           createDialogPayload(
             initialTitle,
-            getWorkflowLabel(activeWorkflow),
+            getWorkflowLabel(activeWorkflow, config.customPresets),
             "Original",
             output
           ),
@@ -1377,6 +1432,7 @@ export default function App(props: AppProps) {
         );
         setStatus("Reply draft generated.");
       }
+
 
       if (activeWorkflow === "improveDraft") {
         const source = await resolveWorkflowSourceText(true, preferredScope !== "selection");
@@ -1467,10 +1523,20 @@ export default function App(props: AppProps) {
           });
         }
 
+        const metadata = await getEmailMetadata();
+        const attachments = await getEmailAttachments();
+        const userProfile = getCurrentUserProfile();
+        const enrichedThread = buildEnrichedThreadContext(
+          optimizedThread.text,
+          metadata,
+          attachments,
+          userProfile
+        );
+
         const initialTitle = "Improved reply draft";
         const livePayload = createDialogPayload(
           initialTitle,
-          getWorkflowLabel(activeWorkflow),
+          getWorkflowLabel(activeWorkflow, config.customPresets),
           "Original",
           ""
         );
@@ -1481,7 +1547,7 @@ export default function App(props: AppProps) {
         const output = await runAi(
           buildImproveReplyMessages(
             optimizedDraft.text,
-            optimizedThread.text,
+            enrichedThread,
             tone,
             formality,
             length,
@@ -1497,7 +1563,7 @@ export default function App(props: AppProps) {
         await presentResult(
           createDialogPayload(
             initialTitle,
-            getWorkflowLabel(activeWorkflow),
+            getWorkflowLabel(activeWorkflow, config.customPresets),
             "Original",
             output
           ),
@@ -1509,6 +1575,7 @@ export default function App(props: AppProps) {
           setStatus("Reply-style draft improvement completed.");
         }
       }
+
 
       if (activeWorkflow === "actionItems") {
         const source = await resolveWorkflowSourceText(true, preferredScope !== "selection");
@@ -1708,6 +1775,78 @@ export default function App(props: AppProps) {
             : `Translation to ${targetLanguage} completed${usedHtml ? " (HTML preserved)." : "."}`
         );
       }
+
+      if (activeWorkflow.startsWith("preset:")) {
+        const presetId = activeWorkflow.slice(7);
+        const preset = config.customPresets.find((p) => p.id === presetId);
+        if (!preset) {
+          throw new Error("Custom preset not found.");
+        }
+
+        let sourceText = "";
+        let usedSelection = false;
+
+        if (preset.scope === "thread" && hostMode === "compose") {
+          const bodyText = await getCurrentBodyText();
+          const replyContext = splitDraftAndThread(bodyText);
+          sourceText = replyContext.threadText || bodyText;
+        } else {
+          const source = await resolveWorkflowSourceText(true, preferredScope !== "selection");
+          sourceText = source.text;
+          usedSelection = source.usedSelection;
+        }
+
+        if (!sourceText.trim()) {
+          throw new Error(`No email content found to run "${preset.label}".`);
+        }
+
+        const metadata = await getEmailMetadata();
+        const attachments = await getEmailAttachments();
+        const userProfile = getCurrentUserProfile();
+        const enrichedThread = buildEnrichedThreadContext("", metadata, attachments, userProfile);
+
+        const optimizedSource = optimizeSourceForLatency(sourceText);
+
+        const initialTitle = preset.label;
+        const livePayload = createDialogPayload(
+          initialTitle,
+          preset.label,
+          targetLanguage,
+          ""
+        );
+        void openOrUpdateResultDialog(livePayload).catch((dialogErr) => {
+          logError("Initial dialog open failed", dialogErr);
+        });
+
+        const output = await runAi(
+          buildCustomPresetMessages(
+            preset,
+            optimizedSource.text,
+            enrichedThread,
+            targetLanguage,
+            direction.trim(),
+            tone,
+            formality,
+            length
+          ),
+          (_delta, accumulated) => {
+            postResultToDialog({
+              ...livePayload,
+              text: accumulated,
+            });
+          }
+        );
+        await presentResult(
+          createDialogPayload(
+            initialTitle,
+            preset.label,
+            targetLanguage,
+            output
+          ),
+          activeWorkflow
+        );
+        setStatus(`${preset.label} completed.`);
+      }
     } catch (error) {
       if (isCancelledError(error)) {
         setStatus("Request cancelled.");
@@ -1720,6 +1859,79 @@ export default function App(props: AppProps) {
       setIsLoading(false);
     }
   };
+
+  const onSavePreset = (presetToSave: CustomPreset) => {
+    const validation = validateCustomPreset(presetToSave);
+    if (validation) {
+      setPresetEditorError(validation);
+      return;
+    }
+
+    const updatedPresets = [...config.customPresets];
+    const existingIndex = updatedPresets.findIndex((p) => p.id === presetToSave.id);
+    if (existingIndex >= 0) {
+      updatedPresets[existingIndex] = presetToSave;
+    } else {
+      updatedPresets.push(presetToSave);
+    }
+
+    const newConfig = { ...config, customPresets: updatedPresets };
+    setConfig(newConfig);
+    void saveAiServiceConfig(newConfig);
+    setEditingPreset(null);
+    setIsEditingNewPreset(false);
+    setPresetEditorError("");
+    showToast(`Preset "${presetToSave.label}" saved.`);
+  };
+
+  const onDeletePreset = (presetId: string) => {
+    const updatedPresets = config.customPresets.filter((p) => p.id !== presetId);
+    const newConfig = { ...config, customPresets: updatedPresets };
+    setConfig(newConfig);
+    void saveAiServiceConfig(newConfig);
+    showToast("Preset removed.");
+  };
+
+  const onResetPresets = () => {
+    const newConfig = { ...config, customPresets: [...DEFAULT_CUSTOM_PRESETS] };
+    setConfig(newConfig);
+    void saveAiServiceConfig(newConfig);
+    showToast("Presets reset to defaults.");
+  };
+
+  const onExportPresets = () => {
+    try {
+      const dataStr =
+        "data:text/json;charset=utf-8," +
+        encodeURIComponent(JSON.stringify(config.customPresets, null, 2));
+      const downloadAnchor = document.createElement("a");
+      downloadAnchor.setAttribute("href", dataStr);
+      downloadAnchor.setAttribute("download", "outlook_ai_presets.json");
+      document.body.appendChild(downloadAnchor);
+      downloadAnchor.click();
+      downloadAnchor.remove();
+      showToast("Presets exported to JSON.");
+    } catch {
+      showToast("Export failed.");
+    }
+  };
+
+  const onImportPresets = (jsonText: string) => {
+    try {
+      const parsed = JSON.parse(jsonText);
+      if (!Array.isArray(parsed)) {
+        throw new Error("Invalid format: expected array of presets.");
+      }
+      const merged = mergeCustomPresets(parsed);
+      const newConfig = { ...config, customPresets: merged };
+      setConfig(newConfig);
+      void saveAiServiceConfig(newConfig);
+      showToast(`Imported ${merged.length} presets.`);
+    } catch (e: any) {
+      setPresetEditorError(`Import error: ${e?.message || "Invalid JSON"}`);
+    }
+  };
+
 
   const onApplyToDraft = async () => {
     try {
@@ -1848,7 +2060,10 @@ export default function App(props: AppProps) {
         e.preventDefault();
         setIsShortcutsVisible((prev) => !prev);
       } else if (e.key === "Escape") {
-        if (isShortcutsVisible) {
+        if (isPresetManagerVisible) {
+          setIsPresetManagerVisible(false);
+          setEditingPreset(null);
+        } else if (isShortcutsVisible) {
           setIsShortcutsVisible(false);
         } else if (isPromptEditorVisible) {
           setIsPromptEditorVisible(false);
@@ -1877,6 +2092,7 @@ export default function App(props: AppProps) {
     isSuggestingSubject,
     isShortcutsVisible,
     isPromptEditorVisible,
+    isPresetManagerVisible,
     isConfigVisible,
   ]);
 
@@ -1889,6 +2105,18 @@ export default function App(props: AppProps) {
             {!isConfigReady && (
               <span className="taskpane-pill taskpane-pill-warning">Configuration missing</span>
             )}
+            <DefaultButton
+              className="taskpane-icon-button"
+              iconProps={{ iconName: "Starburst" }}
+              title="Custom Presets & Personas"
+              ariaLabel="Custom Presets & Personas"
+              onClick={() => {
+                setEditingPreset(null);
+                setIsEditingNewPreset(false);
+                setPresetEditorError("");
+                setIsPresetManagerVisible(true);
+              }}
+            />
             <DefaultButton
               className="taskpane-icon-button"
               iconProps={{ iconName: "Help" }}
@@ -1912,6 +2140,7 @@ export default function App(props: AppProps) {
             />
           </div>
         </div>
+
 
 
         {isConfigVisible && (
@@ -2115,7 +2344,14 @@ export default function App(props: AppProps) {
         )}
 
         <div className="taskpane-section">
-          <h3>Workflows</h3>
+          <div className="taskpane-heading-row">
+            <h3 style={{ margin: 0 }}>Workflows</h3>
+            {detectedEmailLanguage && (
+              <span className="taskpane-pill" style={{ fontSize: "11px" }}>
+                🌐 Thread: {detectedEmailLanguage}
+              </span>
+            )}
+          </div>
           {hasActiveRequest && (
             <div className="taskpane-actions">
               <DefaultButton
@@ -2149,10 +2385,51 @@ export default function App(props: AppProps) {
               </DefaultButton>
             ))}
           </div>
-          <p className="taskpane-config-state">
+
+          {config.customPresets.length > 0 && (
+            <>
+              <div
+                className="taskpane-heading-row"
+                style={{ marginTop: "12px", marginBottom: "4px" }}
+              >
+                <span className="taskpane-config-state" style={{ fontWeight: 600 }}>
+                  Custom Presets & Personas:
+                </span>
+                <DefaultButton
+                  className="taskpane-icon-button"
+                  iconProps={{ iconName: "Add" }}
+                  title="Create or manage custom presets"
+                  ariaLabel="Manage presets"
+                  onClick={() => {
+                    setEditingPreset(null);
+                    setIsEditingNewPreset(false);
+                    setPresetEditorError("");
+                    setIsPresetManagerVisible(true);
+                  }}
+                />
+              </div>
+              <div className="workflow-grid">
+                {config.customPresets.map((preset) => (
+                  <DefaultButton
+                    key={preset.id}
+                    className={`workflow-button ${workflow === `preset:${preset.id}` ? "is-active" : ""}`}
+                    iconProps={{ iconName: preset.iconName || "LightningBolt" }}
+                    title={`${preset.label}: ${preset.description}`}
+                    onClick={() => void onRunWorkflow(`preset:${preset.id}` as Workflow)}
+                    disabled={isLoading || !isConfigReady}
+                  >
+                    {preset.shortLabel || preset.label}
+                  </DefaultButton>
+                ))}
+              </div>
+            </>
+          )}
+
+          <p className="taskpane-config-state" style={{ marginTop: "10px" }}>
             Tap a workflow button to run, or press <kbd className="taskpane-inline-kbd">Ctrl+Enter</kbd> to run the selected workflow.
           </p>
         </div>
+
 
         <div className="taskpane-section">
           <h3>Options</h3>
@@ -2557,9 +2834,242 @@ export default function App(props: AppProps) {
           <PrimaryButton onClick={() => setIsShortcutsVisible(false)} text="Got it" />
         </DialogFooter>
       </Dialog>
+
+      <Dialog
+        hidden={!isPresetManagerVisible}
+        onDismiss={() => {
+          setIsPresetManagerVisible(false);
+          setEditingPreset(null);
+        }}
+        dialogContentProps={{
+          type: DialogType.largeHeader,
+          title: editingPreset
+            ? isEditingNewPreset
+              ? "New Custom Preset"
+              : `Edit Preset: ${editingPreset.label}`
+            : "Custom Presets & Personas",
+          subText: editingPreset
+            ? "Configure your prompt persona, system instructions, and dynamic placeholders."
+            : "One-click workflows tailored to your specific communication style and business tasks.",
+        }}
+        minWidth={680}
+        modalProps={{ isBlocking: false }}
+      >
+        {presetEditorError && (
+          <MessageBar messageBarType={MessageBarType.error} isMultiline={false}>
+            {presetEditorError}
+          </MessageBar>
+        )}
+
+        {editingPreset ? (
+          <div className="preset-editor-form">
+            <TextField
+              label="Preset Name"
+              required
+              value={editingPreset.label}
+              placeholder="e.g. Executive Brief"
+              onChange={(_ev, val) =>
+                setEditingPreset({
+                  ...editingPreset,
+                  label: val || "",
+                  shortLabel: editingPreset.shortLabel || (val || "").slice(0, 15),
+                })
+              }
+            />
+            <TextField
+              label="Short Label (for workflow grid button)"
+              value={editingPreset.shortLabel || ""}
+              placeholder="e.g. Exec Brief"
+              onChange={(_ev, val) =>
+                setEditingPreset({ ...editingPreset, shortLabel: val || "" })
+              }
+            />
+            <Dropdown
+              label="Icon"
+              selectedKey={editingPreset.iconName || "LightningBolt"}
+              options={AVAILABLE_PRESET_ICONS}
+              onChange={(_ev, option) => {
+                if (option) {
+                  setEditingPreset({ ...editingPreset, iconName: option.key as string });
+                }
+              }}
+            />
+            <TextField
+              label="Description (tooltip)"
+              value={editingPreset.description || ""}
+              placeholder="Brief summary of what this preset does"
+              onChange={(_ev, val) =>
+                setEditingPreset({ ...editingPreset, description: val || "" })
+              }
+            />
+            <TextField
+              label="System Prompt"
+              required
+              multiline
+              rows={4}
+              value={editingPreset.systemPrompt || ""}
+              placeholder="System behavior and instructions for the AI model..."
+              onChange={(_ev, val) =>
+                setEditingPreset({ ...editingPreset, systemPrompt: val || "" })
+              }
+            />
+            <div>
+              <label className="ms-Label" style={{ display: "block", marginBottom: "4px" }}>
+                User Prompt Template
+              </label>
+              <div style={{ marginBottom: "6px" }}>
+                <span className="taskpane-config-state" style={{ marginRight: "6px" }}>
+                  Click to insert placeholder:
+                </span>
+                {["{{source}}", "{{thread_context}}", "{{output_language}}", "{{direction}}", "{{style}}"].map(
+                  (placeholder) => (
+                    <button
+                      key={placeholder}
+                      type="button"
+                      className="preset-placeholder-tag"
+                      onClick={() => {
+                        const current = editingPreset.userPromptTemplate || "";
+                        setEditingPreset({
+                          ...editingPreset,
+                          userPromptTemplate: current ? `${current}\n${placeholder}` : placeholder,
+                        });
+                      }}
+                    >
+                      {placeholder}
+                    </button>
+                  )
+                )}
+              </div>
+              <TextField
+                required
+                multiline
+                rows={6}
+                value={editingPreset.userPromptTemplate || ""}
+                placeholder="User message template with placeholders like {{source}}, {{thread_context}}..."
+                onChange={(_ev, val) =>
+                  setEditingPreset({ ...editingPreset, userPromptTemplate: val || "" })
+                }
+              />
+            </div>
+            <DialogFooter>
+              <DefaultButton
+                onClick={() => {
+                  setEditingPreset(null);
+                  setPresetEditorError("");
+                }}
+                text="Cancel"
+              />
+              <PrimaryButton
+                onClick={() => onSavePreset(editingPreset)}
+                text="Save Preset"
+              />
+            </DialogFooter>
+          </div>
+        ) : (
+          <div>
+            <div className="preset-list">
+              {config.customPresets.map((preset) => (
+                <div key={preset.id} className="preset-card">
+                  <div className="preset-card-header">
+                    <div className="preset-card-title">
+                      <DefaultButton
+                        iconProps={{ iconName: preset.iconName || "LightningBolt" }}
+                        style={{ minWidth: "32px", padding: 0, height: "32px" }}
+                        disabled
+                      />
+                      <span>{preset.label}</span>
+                      {preset.isBuiltIn && <span className="preset-tag">Built-in</span>}
+                    </div>
+                    <div className="taskpane-actions" style={{ margin: 0 }}>
+                      <DefaultButton
+                        iconProps={{ iconName: "Edit" }}
+                        title="Edit preset"
+                        onClick={() => {
+                          setEditingPreset({ ...preset });
+                          setIsEditingNewPreset(false);
+                          setPresetEditorError("");
+                        }}
+                      />
+                      <DefaultButton
+                        iconProps={{ iconName: "Copy" }}
+                        title="Clone preset"
+                        onClick={() => {
+                          setEditingPreset({
+                            ...preset,
+                            id: `preset-${Date.now().toString(36)}`,
+                            label: `${preset.label} (Copy)`,
+                            shortLabel: `${preset.shortLabel || preset.label} Copy`.slice(0, 15),
+                            isBuiltIn: false,
+                          });
+                          setIsEditingNewPreset(true);
+                          setPresetEditorError("");
+                        }}
+                      />
+                      {!preset.isBuiltIn && (
+                        <DefaultButton
+                          iconProps={{ iconName: "Delete" }}
+                          title="Delete preset"
+                          onClick={() => onDeletePreset(preset.id)}
+                        />
+                      )}
+                    </div>
+                  </div>
+                  {preset.description && (
+                    <div className="preset-card-desc">{preset.description}</div>
+                  )}
+                </div>
+              ))}
+            </div>
+            <DialogFooter>
+              <DefaultButton
+                iconProps={{ iconName: "Add" }}
+                onClick={() => {
+                  setEditingPreset({
+                    id: `preset-${Date.now().toString(36)}`,
+                    label: "",
+                    shortLabel: "",
+                    iconName: "LightningBolt",
+                    description: "",
+                    systemPrompt:
+                      "You are an executive email assistant. Provide clear, professional output.",
+                    userPromptTemplate:
+                      "{{style}}\n\n{{source}}\n\n{{thread_context}}",
+                    scope: "all",
+                    isBuiltIn: false,
+                  });
+                  setIsEditingNewPreset(true);
+                  setPresetEditorError("");
+                }}
+                text="New Preset"
+              />
+              <DefaultButton
+                iconProps={{ iconName: "Download" }}
+                onClick={onExportPresets}
+                title="Export presets as JSON"
+                text="Export"
+              />
+              <DefaultButton
+                iconProps={{ iconName: "Refresh" }}
+                onClick={onResetPresets}
+                title="Reset to default built-in presets"
+                text="Reset defaults"
+              />
+              <PrimaryButton
+                onClick={() => {
+                  setIsPresetManagerVisible(false);
+                  setEditingPreset(null);
+                }}
+                text="Done"
+              />
+            </DialogFooter>
+          </div>
+        )}
+      </Dialog>
+
       {toastMessage && <div className="taskpane-toast">{toastMessage}</div>}
     </div>
   );
 }
+
 
 
