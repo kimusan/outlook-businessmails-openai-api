@@ -233,18 +233,11 @@ const workflowDefinitions: Array<{
   },
   {
     key: "translate",
-    label: "Translate selected text/message",
+    label:
+      "Translate the message — formatting, links and images are preserved (selected text, if any, is translated alone)",
     shortLabel: "Translate",
     iconName: "LocaleLanguage",
     hostModes: ["compose", "read"],
-  },
-  {
-    key: "translateInPlace",
-    label:
-      "Translate the full message in place — formatting, links and images are preserved (read mode shows the translated copy in the result dialog)",
-    shortLabel: "In-place",
-    iconName: "LocaleLanguage",
-    hostModes: ["read", "compose"],
   },
   {
     key: "summary",
@@ -456,12 +449,10 @@ function getWorkflowLabel(workflow: Workflow, customPresets?: CustomPreset[]): s
     return "Action items";
   }
 
-  if (workflow === "translate") {
+  if (workflow === "translate" || workflow === "translateInPlace") {
+    // translateInPlace is the former separate workflow; the key survives in
+    // old result-history entries, which still render with this label.
     return "Translate";
-  }
-
-  if (workflow === "translateInPlace") {
-    return "Translate in place";
   }
 
   if (workflow.startsWith("preset:")) {
@@ -1885,11 +1876,17 @@ export default function App(props: AppProps) {
         );
       }
 
+      let translateSelectionHandled = false;
       if (activeWorkflow === "translate") {
-        let source = await resolveWorkflowSourceText(true, preferredScope !== "selection");
+        // One merged workflow: a text selection (or selection override) is
+        // translated alone as a streamed result; without a selection the whole
+        // message runs through the in-place flow below, which preserves
+        // formatting, links and images by construction.
+        let source: { text: string; usedSelection: boolean } | null = null;
         let usedHtml = false;
 
         if (preferredScope === "selection") {
+          source = await resolveWorkflowSourceText(true, false);
           let selectedHtml = await getSelectedHtmlOrEmpty();
           if (!selectedHtml.trim()) {
             const snapshot = getSelectionSnapshotForCurrentItem();
@@ -1909,78 +1906,76 @@ export default function App(props: AppProps) {
             };
             usedHtml = true;
           }
-        }
 
-        if (!source.usedSelection && !usedHtml && preferredScope === "selection") {
-          throw new Error(
-            "No selection was detected for translation. Select text in the email and run the selection action again."
-          );
-        }
-
-        if (!source.usedSelection && !usedHtml) {
-          const bodyHtml = await getCurrentBodyHtml();
-          if (bodyHtml.trim()) {
-            source = {
-              text: bodyHtml,
-              usedSelection: false,
-            };
-            usedHtml = true;
+          if (!source.usedSelection && !usedHtml) {
+            throw new Error(
+              "No selection was detected for translation. Select text in the email and run the selection action again."
+            );
+          }
+        } else {
+          // Whole-message scope: translate the selection if the user made one
+          // (matching the old Translate behavior); otherwise fall through to
+          // the in-place whole-message flow below.
+          try {
+            source = await resolveWorkflowSourceText(true, false);
+          } catch {
+            source = null; // no selection -> in-place flow handles the body
+          }
+          if (source && !source.usedSelection) {
+            source = null;
           }
         }
 
-        if (!source.text.trim()) {
-          throw new Error("No email content found to translate.");
-        }
-
-        const optimizedTranslationSource = optimizeSourceForLatency(source.text);
-        if (optimizedTranslationSource.changed) {
-          appendDebugLog("Context optimized for latency (translation)", {
-            reasons: optimizedTranslationSource.reason,
-            originalChars: source.text.length,
-            optimizedChars: optimizedTranslationSource.text.length,
-          });
-        }
-
-        const initialTitle = source.usedSelection ? "Translation of selected text" : "Translation of email";
-        const livePayload = createDialogPayload(
-          initialTitle,
-          getWorkflowLabel(activeWorkflow),
-          targetLanguage,
-          ""
-        );
-        void openOrUpdateResultDialog(livePayload).catch((dialogErr) => {
-          logError("Initial dialog open failed", dialogErr);
-        });
-
-        const streamToDialog = createDialogStreamSender(livePayload);
-        const output = await runAi(
-          buildTranslationMessages(
-            optimizedTranslationSource.text,
-            targetLanguage,
-            config.promptTemplates
-          ),
-          (_delta, accumulated) => {
-            streamToDialog.push(accumulated);
+        if (source && (source.usedSelection || usedHtml)) {
+          const optimizedTranslationSource = optimizeSourceForLatency(source.text);
+          if (optimizedTranslationSource.changed) {
+            appendDebugLog("Context optimized for latency (translation)", {
+              reasons: optimizedTranslationSource.reason,
+              originalChars: source.text.length,
+              optimizedChars: optimizedTranslationSource.text.length,
+            });
           }
-        );
-        streamToDialog.complete(output);
-        await presentResult(
-          createDialogPayload(
+
+          const initialTitle = "Translation of selected text";
+          const livePayload = createDialogPayload(
             initialTitle,
             getWorkflowLabel(activeWorkflow),
             targetLanguage,
-            output
-          ),
-          activeWorkflow
-        );
-        setStatus(
-          source.usedSelection
-            ? `Selection translated to ${targetLanguage}${usedHtml ? " (HTML preserved)." : "."}`
-            : `Translation to ${targetLanguage} completed${usedHtml ? " (HTML preserved)." : "."}`
-        );
+            ""
+          );
+          void openOrUpdateResultDialog(livePayload).catch((dialogErr) => {
+            logError("Initial dialog open failed", dialogErr);
+          });
+
+          const streamToDialog = createDialogStreamSender(livePayload);
+          const output = await runAi(
+            buildTranslationMessages(
+              optimizedTranslationSource.text,
+              targetLanguage,
+              config.promptTemplates
+            ),
+            (_delta, accumulated) => {
+              streamToDialog.push(accumulated);
+            }
+          );
+          streamToDialog.complete(output);
+          await presentResult(
+            createDialogPayload(
+              initialTitle,
+              getWorkflowLabel(activeWorkflow),
+              targetLanguage,
+              output
+            ),
+            activeWorkflow
+          );
+          setStatus(
+            `Selection translated to ${targetLanguage}${usedHtml ? " (HTML preserved)." : "."}`
+          );
+          translateSelectionHandled = true;
+        }
       }
 
-      if (activeWorkflow === "translateInPlace") {
+      if (activeWorkflow === "translate" && !translateSelectionHandled) {
         const bodyHtml = await getCurrentBodyHtml();
         if (!bodyHtml.trim()) {
           throw new Error("No email body found to translate.");
@@ -2016,9 +2011,11 @@ export default function App(props: AppProps) {
 
           for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
             const batch = batches[batchIndex];
+            const doneSegments = Object.keys(mapping).filter((id) => id !== "subject").length;
+            const percentSoFar = Math.round((doneSegments / parsedBody.segments.length) * 100);
             setStatus(
               batches.length > 1
-                ? `Translating part ${batchIndex + 1}/${batches.length}...`
+                ? `Translating to ${targetLanguage} — ${percentSoFar}% (part ${batchIndex + 1}/${batches.length})`
                 : `Translating message to ${targetLanguage}...`
             );
 
@@ -2122,6 +2119,7 @@ export default function App(props: AppProps) {
           translationController.signal.addEventListener("abort", abortChildren);
           activeRequestControllerRef.current = translationController;
           setHasActiveRequest(true);
+          setStatus(`Translating to ${targetLanguage} — 0% (part 0/${batches.length})`);
 
           const mergedMapping: Record<string, string[]> = {};
           let translatedSubjectHtml = "";
@@ -2193,9 +2191,10 @@ export default function App(props: AppProps) {
               translatedCount += Object.keys(batchMapping).length;
               keptOriginalCount += invalidIds.filter((id) => id !== "subject").length;
               batchDone += 1;
+              const percentDone = Math.round((translatedCount / parsedBody.segments.length) * 100);
               setStatus(
                 batches.length > 1
-                  ? `Translating part ${batchDone}/${batches.length}...`
+                  ? `Translating to ${targetLanguage} — ${percentDone}% (part ${batchDone}/${batches.length})`
                   : `Translating message to ${targetLanguage}...`
               );
               sendUpdate(false, false);
@@ -2857,10 +2856,7 @@ export default function App(props: AppProps) {
                 iconProps={{ iconName: definition.iconName }}
                 title={definition.label}
                 onClick={() => {
-                  if (
-                    (definition.key === "translate" || definition.key === "translateInPlace") &&
-                    workflow !== definition.key
-                  ) {
+                  if (definition.key === "translate" && workflow !== definition.key) {
                     setWorkflow(definition.key);
                     setStatus("Select target language, then press Translate again to run.");
                     return;
@@ -3005,9 +3001,7 @@ export default function App(props: AppProps) {
             </>
           )}
 
-          {(workflow === "translate" ||
-            workflow === "actionItems" ||
-            workflow === "translateInPlace") && (
+          {(workflow === "translate" || workflow === "actionItems") && (
             <Dropdown
               label="Target language"
               selectedKey={targetLanguage}
@@ -3152,9 +3146,16 @@ export default function App(props: AppProps) {
         )}
 
         {statusText && (
-          <MessageBar messageBarType={MessageBarType.success} isMultiline>
-            {statusText}
-          </MessageBar>
+          hasActiveRequest ? (
+            <div className="status-progress" role="status">
+              <span className="status-progress-dot" aria-hidden="true" />
+              <span>{statusText}</span>
+            </div>
+          ) : (
+            <MessageBar messageBarType={MessageBarType.success} isMultiline>
+              {statusText}
+            </MessageBar>
+          )
         )}
 
         {errorText && (

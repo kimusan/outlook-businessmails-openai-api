@@ -691,5 +691,50 @@ body {
   padding-right: 4px;
 }
 
+/* Prominent in-progress banner for status lines like
+   "Translating part 3/7..." - bold text on a highlighted background so
+   progress is impossible to miss while a request is running. */
+.status-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 700;
+  font-size: 14px;
+  color: #1e3a8a;
+  background: #eef6ff;
+  border: 1px solid #bfd4f5;
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+
+.status-progress-dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #2b6cb0;
+  animation: status-progress-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes status-progress-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.8);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-progress-dot {
+    animation: none;
+  }
+}
+
+
 
 

@@ -87,6 +87,7 @@ function applyPayload(payload: ResultDialogPayload): void {
   resetTranslationView();
   currentText = payload.text || "";
   titleNode.textContent = payload.title || "AI Result";
+  metaNode.classList.remove("is-live");
   metaNode.textContent = `${payload.workflow} | ${payload.language} | ${new Date(
     payload.generatedAt
   ).toLocaleString()}`;
@@ -117,7 +118,8 @@ function applyTranslationView(payload: TranslationViewPayload): void {
   currentText = "";
 
   titleNode.textContent = payload.title || "Translated message";
-  metaNode.textContent = `Live translation to ${payload.language} — 0%`;
+  metaNode.classList.add("is-live");
+  metaNode.textContent = `Translating to ${payload.language} — 0%`;
 
   if (payload.noteHtml) {
     notesNode.innerHTML = payload.noteHtml;
@@ -180,6 +182,7 @@ function applyTranslationUpdate(payload: TranslationUpdatePayload): void {
 
   const percent =
     liveTotalSegments > 0 ? Math.round((payload.translatedCount / liveTotalSegments) * 100) : 0;
+  metaNode.classList.toggle("is-live", !payload.finished && !payload.cancelled);
   if (payload.cancelled) {
     metaNode.textContent = `Translation cancelled — ${payload.translatedCount} of ${liveTotalSegments} segments translated`;
   } else if (payload.finished) {
@@ -187,7 +190,7 @@ function applyTranslationUpdate(payload: TranslationUpdatePayload): void {
       payload.keptOriginalCount > 0 ? ` (${payload.keptOriginalCount} kept original)` : "";
     metaNode.textContent = `Translated to ${liveLanguage} — ${payload.translatedCount} segments${keptNote}`;
   } else {
-    metaNode.textContent = `Live translation to ${liveLanguage} — ${percent}% (part ${Math.min(
+    metaNode.textContent = `Translating to ${liveLanguage} — ${percent}% (part ${Math.min(
       payload.batchDone,
       payload.batchCount
     )}/${payload.batchCount})`;
