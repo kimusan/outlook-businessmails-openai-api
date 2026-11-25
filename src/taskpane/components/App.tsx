@@ -77,8 +77,14 @@ import {
   listAvailableModels,
   refreshAccessToken,
 } from "../../shared/aiClient";
-import { ResultDialogOutgoingMessage, ResultDialogPayload } from "../../shared/dialogMessages";
-import { containsHtmlMarkup, formatStructuredTextAsHtml } from "../../shared/richText";
+import {
+  ResultDialogIncomingMessage,
+  ResultDialogOutgoingMessage,
+  ResultDialogPayload,
+  TranslationUpdatePayload,
+  TranslationViewPayload,
+} from "../../shared/dialogMessages";
+import { containsHtmlMarkup, formatStructuredTextAsHtml, sanitizeHtmlFragment } from "../../shared/richText";
 import { computeWordDiff, formatDiffAsHtml } from "../../shared/diffUtils";
 import {
   applySegmentTranslations,
@@ -632,7 +638,14 @@ export default function App(props: AppProps) {
   const hasInitializedAutoSaveRef = React.useRef<boolean>(false);
   const selectionSnapshotRef = React.useRef<SelectionSnapshot | null>(null);
   const dialogRef = React.useRef<Office.Dialog | null>(null);
-  const currentDialogPayloadRef = React.useRef<ResultDialogPayload | null>(null);
+  const currentDialogPayloadRef = React.useRef<ResultDialogIncomingMessage | null>(null);
+  // Live translated view: on dialog "ready" both the view and the latest
+  // full mapping update must be replayed (either may have been sent before
+  // the dialog registered its message handler).
+  const translationViewStateRef = React.useRef<{
+    view: TranslationViewPayload;
+    latestUpdate: TranslationUpdatePayload | null;
+  } | null>(null);
   const activeRequestControllerRef = React.useRef<AbortController | null>(null);
   const chatRequestControllerRef = React.useRef<AbortController | null>(null);
   const keydownHandlerRef = React.useRef<(e: KeyboardEvent) => void>(() => {});
@@ -1238,7 +1251,11 @@ export default function App(props: AppProps) {
     return dialogUrl.toString();
   };
 
-  const postResultToDialog = (payload: ResultDialogPayload): boolean => {
+  const postResultToDialog = (payload: ResultDialogIncomingMessage): boolean => {
+    if (payload.type === "resultPayload") {
+      // A regular result replaces any live translated view.
+      translationViewStateRef.current = null;
+    }
     currentDialogPayloadRef.current = payload;
     if (!dialogRef.current) {
       return false;
@@ -1284,7 +1301,10 @@ export default function App(props: AppProps) {
     };
   };
 
-  const openOrUpdateResultDialog = async (payload: ResultDialogPayload) => {
+  const openOrUpdateResultDialog = async (payload: ResultDialogIncomingMessage) => {
+    if (payload.type === "resultPayload") {
+      translationViewStateRef.current = null;
+    }
     currentDialogPayloadRef.current = payload;
     if (
       !Office.context ||
@@ -1333,6 +1353,16 @@ export default function App(props: AppProps) {
             }
 
             if (message.type === "ready") {
+              if (translationViewStateRef.current) {
+                // Replay the live translated view and every translation so
+                // far; updates carry the full mapping, so this heals any
+                // update lost before the dialog registered its handler.
+                postResultToDialog(translationViewStateRef.current.view);
+                if (translationViewStateRef.current.latestUpdate) {
+                  postResultToDialog(translationViewStateRef.current.latestUpdate);
+                }
+                return;
+              }
               if (currentDialogPayloadRef.current) {
                 postResultToDialog(currentDialogPayloadRef.current);
               }
@@ -1969,87 +1999,90 @@ export default function App(props: AppProps) {
           throw new Error("No email body found to translate.");
         }
 
-        const parsedBody = parseMailBodyHtml(bodyHtml);
-        if (!parsedBody || parsedBody.segments.length === 0) {
-          showToast("Nothing translatable found.");
-          setStatus("Nothing translatable found.");
-          return;
-        }
-
-        const batches = buildSegmentBatches(parsedBody.segments, 4000);
         const subject = await getEmailSubject();
         const firstBatchExtra = subject.trim() ? { subject: [subject.trim()] } : undefined;
 
-        // One controller across all batches keeps Cancel/Escape working, and
-        // passing it as an override suppresses raw-JSON streaming in the UI —
-        // progress is shown via status text only.
+        // One master controller across all batches keeps Cancel/Escape
+        // working; passing per-batch controllers as overrides suppresses
+        // raw-JSON streaming in the UI — progress is shown via status text.
         const translationController = new AbortController();
         setStreamingResultText("");
 
-        const mapping: Record<string, string[]> = {};
-        const keptOriginalIds: string[] = [];
-
-        for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
-          const batch = batches[batchIndex];
-          setStatus(
-            batches.length > 1
-              ? `Translating part ${batchIndex + 1}/${batches.length}...`
-              : `Translating message to ${targetLanguage}...`
-          );
-
-          const extra = batchIndex === 0 ? firstBatchExtra : undefined;
-          let messages = buildInPlaceTranslationMessages(
-            batch,
-            targetLanguage,
-            config.promptTemplates,
-            extra
-          );
-          let batchMapping: Record<string, string[]> | null = null;
-          let invalidIds: string[] = [];
-
-          for (let attempt = 0; attempt < 2; attempt++) {
-            activeRequestControllerRef.current = translationController;
-            setHasActiveRequest(true);
-            const output = await runAi(messages, undefined, translationController);
-            const validation = parseInPlaceTranslationResponse(output, batch, extra);
-            batchMapping = validation.mapping;
-            invalidIds = validation.invalidIds;
-
-            if (invalidIds.length === 0) {
-              break;
-            }
-
-            if (attempt === 0) {
-              // One corrective retry for malformed JSON or mismatched structure.
-              messages = [
-                messages[0],
-                {
-                  ...messages[1],
-                  content: `${messages[1].content}\n\n${IN_PLACE_RETRY_SUFFIX}`,
-                },
-              ];
-            }
-          }
-
-          // Partial results are better than none: keep originals only for ids
-          // that failed validation in both attempts.
-          if (batchMapping) {
-            Object.assign(mapping, batchMapping);
-          }
-          keptOriginalIds.push(...invalidIds);
-        }
-
-        const translatedSubject = mapping.subject && mapping.subject.length > 0
-          ? mapping.subject[0]
-          : "";
-        delete mapping.subject;
-
-        const applyResult = applySegmentTranslations(parsedBody, mapping);
-        const translatedHtml = serializeMailBody(parsedBody);
-        const failedSegmentCount =
-          keptOriginalIds.filter((id) => id !== "subject").length + applyResult.failed.length;
+        const escapeHtmlText = (value: string) =>
+          value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
         if (hostMode === "compose") {
+          const parsedBody = parseMailBodyHtml(bodyHtml);
+          if (!parsedBody || parsedBody.segments.length === 0) {
+            showToast("Nothing translatable found.");
+            setStatus("Nothing translatable found.");
+            return;
+          }
+
+          const batches = buildSegmentBatches(parsedBody.segments, 4000);
+          const mapping: Record<string, string[]> = {};
+          const keptOriginalIds: string[] = [];
+
+          for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+            const batch = batches[batchIndex];
+            setStatus(
+              batches.length > 1
+                ? `Translating part ${batchIndex + 1}/${batches.length}...`
+                : `Translating message to ${targetLanguage}...`
+            );
+
+            const extra = batchIndex === 0 ? firstBatchExtra : undefined;
+            let messages = buildInPlaceTranslationMessages(
+              batch,
+              targetLanguage,
+              config.promptTemplates,
+              extra
+            );
+            let batchMapping: Record<string, string[]> | null = null;
+            let invalidIds: string[] = [];
+
+            for (let attempt = 0; attempt < 2; attempt++) {
+              activeRequestControllerRef.current = translationController;
+              setHasActiveRequest(true);
+              const output = await runAi(messages, undefined, translationController);
+              const validation = parseInPlaceTranslationResponse(output, batch, extra);
+              batchMapping = validation.mapping;
+              invalidIds = validation.invalidIds;
+
+              if (invalidIds.length === 0) {
+                break;
+              }
+
+              if (attempt === 0) {
+                // One corrective retry for malformed JSON or mismatched structure.
+                messages = [
+                  messages[0],
+                  {
+                    ...messages[1],
+                    content: `${messages[1].content}\n\n${IN_PLACE_RETRY_SUFFIX}`,
+                  },
+                ];
+              }
+            }
+
+            // Partial results are better than none: keep originals only for ids
+            // that failed validation in both attempts.
+            if (batchMapping) {
+              Object.assign(mapping, batchMapping);
+            }
+            keptOriginalIds.push(...invalidIds);
+          }
+
+          const translatedSubject = mapping.subject && mapping.subject.length > 0
+            ? mapping.subject[0]
+            : "";
+          delete mapping.subject;
+
+          const applyResult = applySegmentTranslations(parsedBody, mapping);
+          const translatedHtml = serializeMailBody(parsedBody);
+          const failedSegmentCount =
+            keptOriginalIds.filter((id) => id !== "subject").length + applyResult.failed.length;
+
           // Undo snapshot taken before the write so the original body can be
           // restored from the taskpane (body HTML is not sensitive).
           saveTranslationUndoSnapshot({
@@ -2060,40 +2093,212 @@ export default function App(props: AppProps) {
           setTranslationRestoreAvailable(true);
           await setComposeBodyHtml(translatedHtml);
           showToast("✓ Message translated in place.");
+
+          setStatus(
+            `Translated ${applyResult.applied} segments across ${batches.length} batches` +
+              (failedSegmentCount > 0 ? `; ${failedSegmentCount} kept original.` : ".")
+          );
         } else {
+          // READ MODE — live translated copy in the result dialog: the dialog
+          // shows a sanitized copy of the original mail immediately, then each
+          // translated batch is spliced in as it returns, with a flash
+          // animation on every changed segment (dstranslator-style), so the
+          // user watches the translation happen instead of waiting.
+          const sanitizedHtml = sanitizeHtmlFragment(bodyHtml);
+          const parsedBody = parseMailBodyHtml(sanitizedHtml);
+          if (!parsedBody || parsedBody.segments.length === 0) {
+            showToast("Nothing translatable found.");
+            setStatus("Nothing translatable found.");
+            return;
+          }
+
+          const batches = buildSegmentBatches(parsedBody.segments, 4000);
+          const mailCopyHtml = serializeMailBody(parsedBody);
+
           const noteLines: string[] = [
             "Translated view — the received message itself is not modified.",
           ];
-          if (translatedSubject) {
-            noteLines.push(`Subject (translated): ${translatedSubject}`);
-          }
           if (parsedBody.skippedQuotedChain) {
             noteLines.push("The quoted reply chain below the message was skipped.");
           }
-          const noteHtml = `<p>${noteLines
-            .map((line) =>
-              line
-                .replace(/&/g, "&amp;")
-                .replace(/</g, "&lt;")
-                .replace(/>/g, "&gt;")
-            )
-            .join("</p><p>")}</p>`;
+          const noteHtml = `<p>${noteLines.map(escapeHtmlText).join("</p><p>")}</p>`;
 
-          await presentResult(
-            createDialogPayload(
-              "Translated message (read-only)",
-              getWorkflowLabel(activeWorkflow),
+          const viewPayload: TranslationViewPayload = {
+            type: "translationView",
+            title: "Translated message (live)",
+            workflow: getWorkflowLabel(activeWorkflow),
+            language: targetLanguage,
+            generatedAt: new Date().toISOString(),
+            noteHtml,
+            subjectHtml: subject.trim() ? escapeHtmlText(subject.trim()) : "",
+            html: mailCopyHtml,
+            totalSegments: parsedBody.segments.length,
+            batchCount: batches.length,
+            skippedQuotedChain: parsedBody.skippedQuotedChain,
+          };
+
+          translationViewStateRef.current = { view: viewPayload, latestUpdate: null };
+          await openOrUpdateResultDialog(viewPayload);
+
+          // Bounded-parallel workers pull batches from a shared cursor. Each
+          // finished batch is applied to the dialog's mail copy right away;
+          // updates carry the full mapping so a message lost before the
+          // dialog was ready is healed by the next one.
+          const TRANSLATION_CONCURRENCY = 3;
+          const childControllers = new Set<AbortController>();
+          const abortChildren = () => {
+            for (const child of childControllers) {
+              child.abort();
+            }
+          };
+          translationController.signal.addEventListener("abort", abortChildren);
+          activeRequestControllerRef.current = translationController;
+          setHasActiveRequest(true);
+
+          const mergedMapping: Record<string, string[]> = {};
+          let translatedSubjectHtml = "";
+          let translatedCount = 0;
+          let keptOriginalCount = 0;
+          let batchDone = 0;
+          let cursor = 0;
+
+          const sendUpdate = (finished: boolean, cancelled: boolean) => {
+            const update: TranslationUpdatePayload = {
+              type: "translationUpdate",
+              mapping: { ...mergedMapping },
+              translatedCount,
+              keptOriginalCount,
+              batchDone,
+              batchCount: batches.length,
+              finished,
+              cancelled,
+            };
+            if (translatedSubjectHtml) {
+              update.subjectHtml = translatedSubjectHtml;
+            }
+            if (translationViewStateRef.current) {
+              translationViewStateRef.current.latestUpdate = update;
+            }
+            postResultToDialog(update);
+          };
+
+          const translateBatch = async (
+            batch: BodyDomSegment[],
+            extra?: Record<string, string[]>
+          ) => {
+            let messages = buildInPlaceTranslationMessages(
+              batch,
               targetLanguage,
-              `${noteHtml}${translatedHtml}`
-            ),
-            activeWorkflow
+              config.promptTemplates,
+              extra
+            );
+            let batchMapping: Record<string, string[]> | null = null;
+            let invalidIds: string[] = [];
+
+            for (let attempt = 0; attempt < 2; attempt++) {
+              const batchController = new AbortController();
+              childControllers.add(batchController);
+              const abortChild = () => batchController.abort();
+              translationController.signal.addEventListener("abort", abortChild);
+              try {
+                const output = await runAi(messages, undefined, batchController);
+                const validation = parseInPlaceTranslationResponse(output, batch, extra);
+                batchMapping = validation.mapping;
+                invalidIds = validation.invalidIds;
+
+                if (invalidIds.length === 0) {
+                  break;
+                }
+
+                if (attempt === 0) {
+                  // One corrective retry for malformed JSON or mismatched structure.
+                  messages = [
+                    messages[0],
+                    {
+                      ...messages[1],
+                      content: `${messages[1].content}\n\n${IN_PLACE_RETRY_SUFFIX}`,
+                    },
+                  ];
+                }
+              } finally {
+                translationController.signal.removeEventListener("abort", abortChild);
+                childControllers.delete(batchController);
+              }
+            }
+
+            return { batchMapping, invalidIds };
+          };
+
+          const worker = async (): Promise<void> => {
+            while (cursor < batches.length && !translationController.signal.aborted) {
+              const batchIndex = cursor++;
+              const extra = batchIndex === 0 ? firstBatchExtra : undefined;
+              const { batchMapping, invalidIds } = await translateBatch(batches[batchIndex], extra);
+              if (translationController.signal.aborted) {
+                return; // discard results after Cancel
+              }
+
+              // Partial results are better than none: keep originals only
+              // for ids that failed validation in both attempts.
+              if (batchMapping) {
+                if (batchMapping.subject && batchMapping.subject.length > 0) {
+                  translatedSubjectHtml = escapeHtmlText(batchMapping.subject[0]);
+                  delete batchMapping.subject;
+                }
+                for (const id of Object.keys(batchMapping)) {
+                  mergedMapping[id] = batchMapping[id];
+                }
+                translatedCount += Object.keys(batchMapping).length;
+              }
+              keptOriginalCount += invalidIds.filter((id) => id !== "subject").length;
+              batchDone += 1;
+              setStatus(
+                batches.length > 1
+                  ? `Translating part ${batchDone}/${batches.length}...`
+                  : `Translating message to ${targetLanguage}...`
+              );
+              sendUpdate(false, false);
+            }
+          };
+
+          let firstError: unknown = null;
+          await Promise.allSettled(
+            Array.from({ length: Math.min(TRANSLATION_CONCURRENCY, batches.length) }, async () => {
+              try {
+                await worker();
+              } catch (err) {
+                if (firstError === null) {
+                  firstError = err;
+                }
+              }
+            })
+          );
+
+          if (activeRequestControllerRef.current === translationController) {
+            activeRequestControllerRef.current = null;
+            setHasActiveRequest(false);
+          }
+          translationController.signal.removeEventListener("abort", abortChildren);
+
+          if (translationController.signal.aborted) {
+            sendUpdate(false, true);
+            setStatus(
+              `Translation cancelled — ${translatedCount} segments translated so far. ` +
+                "The partial translation stays in the result window."
+            );
+            return;
+          }
+
+          if (firstError !== null) {
+            throw firstError; // keep the workflow's error handling (toast + status)
+          }
+
+          sendUpdate(true, false);
+          setStatus(
+            `Translated ${translatedCount} segments across ${batches.length} batches` +
+              (keptOriginalCount > 0 ? `; ${keptOriginalCount} kept original.` : ".")
           );
         }
-
-        setStatus(
-          `Translated ${applyResult.applied} segments across ${batches.length} batches` +
-            (failedSegmentCount > 0 ? `; ${failedSegmentCount} kept original.` : ".")
-        );
       }
 
       if (activeWorkflow.startsWith("preset:")) {

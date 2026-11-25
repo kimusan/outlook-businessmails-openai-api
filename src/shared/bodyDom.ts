@@ -331,7 +331,8 @@ export function parseMailBodyHtml(
 
 export function applySegmentTranslations(
   parsed: ParsedBody,
-  mapping: Record<string, string[]>
+  mapping: Record<string, string[]>,
+  onApplied?: (nodes: Node[]) => void
 ): { applied: number; failed: string[] } {
   const failed: string[] = [];
   let applied = 0;
@@ -366,11 +367,17 @@ export function applySegmentTranslations(
         // models drop; splice via Text.data so structure cannot change.
         slots[k].node.data = slots[k].leading + values[k] + slots[k].trailing;
       }
+      if (onApplied) {
+        onApplied(slots.map((slot) => slot.node));
+      }
     } else if (internal.element && internal.attributeName) {
       internal.element.setAttribute(
         internal.attributeName,
         (internal.leading || "") + values[0] + (internal.trailing || "")
       );
+      if (onApplied) {
+        onApplied([internal.element]);
+      }
     }
     applied++;
   }

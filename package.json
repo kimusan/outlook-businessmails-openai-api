@@ -38,7 +38,7 @@
     "start:desktop": "office-addin-debugging start manifest.xml desktop --no-debug",
     "start:web": "office-addin-debugging start manifest.xml web --no-debug",
     "stop": "office-addin-debugging stop manifest.xml",
-    "test": "node test/bodyDom.test.mjs",
+    "test": "node test/bodyDom.test.mjs && node test/translationDialog.test.mjs",
     "validate": "office-addin-manifest validate manifest.xml",
     "watch": "webpack --mode development --watch"
   },

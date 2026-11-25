@@ -130,6 +130,76 @@
       color: #6b7280;
       margin-left: 10px;
     }
+
+    /* --- live translated view (read mode) --- */
+
+    .dialog-notes {
+      background: #eef6ff;
+      border: 1px solid #bfd4f5;
+      border-radius: 6px;
+      padding: 8px 12px;
+      margin-bottom: 12px;
+      font-size: 12.5px;
+      color: #1e3a8a;
+    }
+
+    .dialog-notes p {
+      margin: 2px 0;
+    }
+
+    .dialog-subject {
+      font-size: 15px;
+      font-weight: 600;
+      margin: 0 0 12px;
+      color: #111827;
+    }
+
+    /* The mail copy renders the adopted body element: mail HTML brings its
+       own block structure, so the AI-text typography rules do not apply. */
+    .dialog-markup.mail-view {
+      white-space: normal;
+      padding: 0;
+      border: 0;
+      background: #ffffff;
+    }
+
+    .dialog-markup.mail-view > body {
+      display: block;
+      margin: 0;
+      padding: 16px;
+    }
+
+    @keyframes translate-fade-in {
+      from {
+        opacity: 0;
+      }
+      to {
+        opacity: 1;
+      }
+    }
+
+    @keyframes translate-flash {
+      0%,
+      25% {
+        background-color: rgba(100, 149, 237, 0.3);
+        box-shadow: 0 0 0 2px rgba(100, 149, 237, 0.22);
+      }
+      100% {
+        background-color: transparent;
+        box-shadow: 0 0 0 2px transparent;
+      }
+    }
+
+    .translate-flash {
+      animation: translate-fade-in 0.5s ease-out, translate-flash 1400ms ease-out;
+      border-radius: 2px;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .translate-flash {
+        animation: none;
+      }
+    }
   </style>
 </head>
 
@@ -147,6 +217,8 @@
     </header>
 
     <main class="dialog-content">
+      <div id="dialog-notes" class="dialog-notes" hidden></div>
+      <p id="dialog-subject" class="dialog-subject" hidden></p>
       <section id="dialog-markup" class="dialog-markup">
         <p>No content yet.</p>
       </section>
