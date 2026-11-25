@@ -35,6 +35,8 @@ module.exports = async (env, options) => {
   const dev = options.mode === "development";
   const taskpaneEntry = ["./src/taskpane/index.tsx", "./src/taskpane/taskpane.html"];
   // transpileOnly: type-checking is done separately via `npx tsc --noEmit`.
+  // tsconfig targets es2017, so native async/await is emitted and the bundle
+  // needs no runtime polyfill on Mailbox 1.3+ hosts (WebView2/Edge/web).
   const taskpaneLoaders = [
     {
       loader: "ts-loader",
@@ -50,7 +52,6 @@ module.exports = async (env, options) => {
   const config = {
     devtool: "source-map",
     entry: {
-      polyfill: ["core-js/stable", "regenerator-runtime/runtime"],
       taskpane: taskpaneEntry,
       resultDialog: "./src/dialog/resultDialog.ts",
     },
@@ -60,7 +61,15 @@ module.exports = async (env, options) => {
       clean: true,
     },
     resolve: {
-      extensions: [".ts", ".tsx", ".html", ".js"]
+      extensions: [".ts", ".tsx", ".html", ".js"],
+      alias: {
+        // The @fluentui/react "exports" map has no ThemeProvider subpath; point the
+        // deep import at the CommonJS build so it shares modules with /lib/* imports.
+        "@fluentui/react/lib/utilities/ThemeProvider": path.resolve(
+          __dirname,
+          "node_modules/@fluentui/react/lib-commonjs/utilities/ThemeProvider/index.js"
+        ),
+      },
     },
     module: {
       rules: [
@@ -112,12 +121,12 @@ module.exports = async (env, options) => {
       new HtmlWebpackPlugin({
         filename: "taskpane.html",
         template: "./src/taskpane/taskpane.html",
-        chunks: ["taskpane", "polyfill"],
+        chunks: ["taskpane"],
       }),
       new HtmlWebpackPlugin({
         filename: "result-dialog.html",
         template: "./src/dialog/resultDialog.html",
-        chunks: ["resultDialog", "polyfill"],
+        chunks: ["resultDialog"],
       }),
     ],
     devServer: {

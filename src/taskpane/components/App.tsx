@@ -1,20 +1,13 @@
 /* global require, Office, window */
 
 import * as React from "react";
-import {
-  Checkbox,
-  DefaultButton,
-  Dialog,
-  DialogFooter,
-  DialogType,
-  Dropdown,
-  IDropdownOption,
-  MessageBar,
-  MessageBarType,
-  PrimaryButton,
-  SpinButton,
-  TextField,
-} from "@fluentui/react";
+import { Checkbox } from "@fluentui/react/lib/Checkbox";
+import { DefaultButton, PrimaryButton } from "@fluentui/react/lib/Button";
+import { Dialog, DialogFooter, DialogType } from "@fluentui/react/lib/Dialog";
+import { Dropdown, IDropdownOption } from "@fluentui/react/lib/Dropdown";
+import { MessageBar, MessageBarType } from "@fluentui/react/lib/MessageBar";
+import { SpinButton } from "@fluentui/react/lib/SpinButton";
+import { TextField } from "@fluentui/react/lib/TextField";
 import Progress from "./Progress";
 import {
   getEmailMetadata,
