@@ -1,4 +1,5 @@
 import App from "./components/App";
+import ErrorBoundary from "./components/ErrorBoundary";
 import { AppContainer } from "react-hot-loader";
 import { initializeIcons } from "@fluentui/font-icons-mdl2";
 import { ThemeProvider } from "@fluentui/react/lib/utilities/ThemeProvider";
@@ -17,7 +18,9 @@ const render = (Component) => {
   ReactDOM.render(
     <AppContainer>
       <ThemeProvider>
-        <Component title={title} isOfficeInitialized={isOfficeInitialized} />
+        <ErrorBoundary>
+          <Component title={title} isOfficeInitialized={isOfficeInitialized} />
+        </ErrorBoundary>
       </ThemeProvider>
     </AppContainer>,
     document.getElementById("container")

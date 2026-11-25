@@ -4,6 +4,7 @@ const path = require("path");
 const devCerts = require("office-addin-dev-certs");
 const CopyWebpackPlugin = require("copy-webpack-plugin");
 const HtmlWebpackPlugin = require("html-webpack-plugin");
+const { createDevProxyMiddleware } = require("./local-host/dev-proxy.cjs");
 
 const urlDev = "https://localhost:3000/";
 
@@ -133,6 +134,12 @@ module.exports = async (env, options) => {
       hot: true,
       headers: {
         "Access-Control-Allow-Origin": "*",
+      },
+      // The add-in routes cross-origin AI traffic through POST /proxy/fetch on
+      // its own origin (mirroring the packaged local host in sea-main.cjs).
+      setupMiddlewares: (middlewares) => {
+        middlewares.unshift(createDevProxyMiddleware());
+        return middlewares;
       },
       server: {
         type: "https",
