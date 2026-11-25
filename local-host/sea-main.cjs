@@ -481,41 +481,64 @@ function main() {
 
   const httpsOptions = loadHttpsOptions();
   const requestHandler = createRequestHandler(staticDir, port);
-  const server = https.createServer(httpsOptions, requestHandler);
 
-  server.on("error", (error) => {
-    if (error && error.code === "EADDRINUSE") {
-      log("error", `Port ${port} is already in use.`, { port, host });
-    } else {
-      log("error", "HTTPS server failed to start.", {
-        port,
-        host,
-        error: error ? error.message : "Unknown error",
-      });
-    }
+  // Bind every loopback stack (127.0.0.1 and ::1). WebView2 resolves
+  // "localhost" to the IPv6 loopback first, so an IPv4-only bind lets a
+  // stale dev server holding the IPv6/wildcard port silently shadow this
+  // host. With both stacks bound, a leftover dev server fails this start
+  // loudly (EADDRINUSE) instead of serving a stale bundle to the pane.
+  const listenHosts =
+    host === "127.0.0.1" || host === "localhost" || host === "::1" ? ["127.0.0.1", "::1"] : [host];
 
-    process.exitCode = 1;
-    process.exit();
-  });
+  const servers = listenHosts.map((listenHost) => {
+    const server = https.createServer(httpsOptions, requestHandler);
+    server.on("error", (error) => {
+      if (error && error.code === "EADDRINUSE") {
+        log("error", `Port ${port} is already in use.`, { port, host: listenHost });
+      } else {
+        log("error", "HTTPS server failed to start.", {
+          port,
+          host: listenHost,
+          error: error ? error.message : "Unknown error",
+        });
+      }
 
-  server.listen(port, host, () => {
-    log("info", "Outlook AI local host started.", {
-      host,
-      port,
-      staticDir,
-      certPath: resolveCertPath("localhost.pem", "OUTLOOK_AI_HOST_CERT_PATH"),
-      keyPath: resolveCertPath("localhost-key.pem", "OUTLOOK_AI_HOST_CERT_KEY_PATH"),
+      process.exitCode = 1;
+      process.exit();
     });
+    return { server, listenHost };
   });
+
+  let boundCount = 0;
+  for (const { server, listenHost } of servers) {
+    server.listen(port, listenHost, () => {
+      boundCount += 1;
+      if (boundCount === servers.length) {
+        log("info", "Outlook AI local host started.", {
+          host: listenHosts.join(", "),
+          port,
+          staticDir,
+          certPath: resolveCertPath("localhost.pem", "OUTLOOK_AI_HOST_CERT_PATH"),
+          keyPath: resolveCertPath("localhost-key.pem", "OUTLOOK_AI_HOST_CERT_KEY_PATH"),
+        });
+      }
+    });
+  }
+
+  const closeAllServers = () => {
+    for (const { server } of servers) {
+      server.close(() => process.exit(0));
+    }
+  };
 
   process.on("SIGINT", () => {
     log("info", "Received SIGINT; shutting down.");
-    server.close(() => process.exit(0));
+    closeAllServers();
   });
 
   process.on("SIGTERM", () => {
     log("info", "Received SIGTERM; shutting down.");
-    server.close(() => process.exit(0));
+    closeAllServers();
   });
 }
 
