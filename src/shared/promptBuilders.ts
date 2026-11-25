@@ -487,15 +487,15 @@ export function buildCustomPresetMessages(
   const styleStr = tone && formality && length ? formatStyle(tone, formality, length) : "";
 
   const renderedUser = preset.userPromptTemplate
-    .replace(/{{\s*source\s*}}/g, limitedSource)
-    .replace(/{{\s*text\s*}}/g, limitedSource)
-    .replace(/{{\s*draft\s*}}/g, limitedSource)
-    .replace(/{{\s*thread_context\s*}}/g, limitedThread)
-    .replace(/{{\s*thread\s*}}/g, limitedThread)
-    .replace(/{{\s*output_language\s*}}/g, outputLanguage)
-    .replace(/{{\s*target_language\s*}}/g, outputLanguage)
-    .replace(/{{\s*direction\s*}}/g, direction || "(none)")
-    .replace(/{{\s*style\s*}}/g, styleStr);
+    .replace(/{{\s*source\s*}}/g, () => limitedSource)
+    .replace(/{{\s*text\s*}}/g, () => limitedSource)
+    .replace(/{{\s*draft\s*}}/g, () => limitedSource)
+    .replace(/{{\s*thread_context\s*}}/g, () => limitedThread)
+    .replace(/{{\s*thread\s*}}/g, () => limitedThread)
+    .replace(/{{\s*output_language\s*}}/g, () => outputLanguage)
+    .replace(/{{\s*target_language\s*}}/g, () => outputLanguage)
+    .replace(/{{\s*direction\s*}}/g, () => direction || "(none)")
+    .replace(/{{\s*style\s*}}/g, () => styleStr);
 
   const systemContent = containsHtmlMarkup(sourceText)
     ? `${preset.systemPrompt}\n\n${HTML_PRESERVATION_RULE}`

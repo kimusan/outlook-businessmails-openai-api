@@ -33,8 +33,8 @@ export default class Progress extends React.Component<ProgressProps> {
 
     return (
       <section className="ms-welcome__progress ms-u-fadeIn500">
-        {logoSection}
-        {titleSection}
+        {logoSection()}
+        {titleSection()}
         <Spinner size={SpinnerSize.large} label={message} />
       </section>
     );

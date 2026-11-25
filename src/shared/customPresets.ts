@@ -130,15 +130,20 @@ export function mergeCustomPresets(storedPresets?: CustomPreset[] | null): Custo
   }
 
   const validStored = storedPresets.filter(
-    (p) => p && typeof p.id === "string" && typeof p.label === "string" && p.label.trim().length > 0
+    (p) =>
+      p &&
+      typeof p.id === "string" &&
+      p.id.trim().length > 0 &&
+      typeof p.label === "string" &&
+      p.label.trim().length > 0
   );
 
   if (validStored.length === 0) {
     return [...DEFAULT_CUSTOM_PRESETS];
   }
 
-  return validStored.map((preset) => ({
-    id: preset.id || `preset-${Math.random().toString(36).slice(2, 9)}`,
+  const normalizedStored = validStored.map((preset) => ({
+    id: preset.id,
     label: (preset.label || "Custom Preset").trim(),
     shortLabel: (preset.shortLabel || preset.label || "Preset").trim().slice(0, 20),
     iconName: preset.iconName || "LightningBolt",
@@ -148,6 +153,17 @@ export function mergeCustomPresets(storedPresets?: CustomPreset[] | null): Custo
     scope: preset.scope || "all",
     isBuiltIn: Boolean(preset.isBuiltIn),
   }));
+
+  // Merge by id: a stored preset overrides the built-in with the same id,
+  // and built-ins missing from storage are kept so new releases show up.
+  const storedById = new Map(normalizedStored.map((preset) => [preset.id, preset]));
+  const builtInIds = new Set(DEFAULT_CUSTOM_PRESETS.map((preset) => preset.id));
+  const mergedBuiltIns = DEFAULT_CUSTOM_PRESETS.map(
+    (builtIn) => storedById.get(builtIn.id) || builtIn
+  );
+  const customOnly = normalizedStored.filter((preset) => !builtInIds.has(preset.id));
+
+  return [...mergedBuiltIns, ...customOnly];
 }
 
 export function validateCustomPreset(preset: Partial<CustomPreset>): string | null {

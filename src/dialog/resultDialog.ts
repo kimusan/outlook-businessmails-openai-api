@@ -107,15 +107,26 @@ closeButton.addEventListener("click", () => {
 });
 
 Office.onReady(() => {
-  Office.context.ui.addHandlerAsync(Office.EventType.DialogParentMessageReceived, (args) => {
-    const payload = parsePayload(args.message);
-    if (!payload) {
-      setStatus("Ignored unknown payload.");
-      return;
+  Office.context.ui.addHandlerAsync(
+    Office.EventType.DialogParentMessageReceived,
+    (args) => {
+      const payload = parsePayload(args.message);
+      if (!payload) {
+        setStatus("Ignored unknown payload.");
+        return;
+      }
+
+      applyPayload(payload);
+    },
+    (asyncResult: Office.AsyncResult<any>) => {
+      if (asyncResult.status !== Office.AsyncResultStatus.Succeeded) {
+        setStatus(
+          `Failed to register dialog handler: ${asyncResult.error?.message || "unknown error"}`
+        );
+        return;
+      }
+
+      sendMessageToParent({ type: "ready" });
     }
-
-    applyPayload(payload);
-  });
-
-  sendMessageToParent({ type: "ready" });
+  );
 });
