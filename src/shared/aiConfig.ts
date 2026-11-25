@@ -120,6 +120,14 @@ function deriveFromLegacyEndpoint(
   }
 }
 
+function clampTemperature(value: number): number {
+  if (!Number.isFinite(value)) {
+    return DEFAULT_AI_CONFIG.temperature;
+  }
+
+  return Math.min(2, Math.max(0, value));
+}
+
 function normalizeConfig(
   input: Partial<AiServiceConfig & LegacyAiServiceConfig> | null | undefined
 ): AiServiceConfig {
@@ -148,8 +156,9 @@ function normalizeConfig(
     promptTemplates: mergePromptTemplates(input.promptTemplates),
     customPresets: mergeCustomPresets(input.customPresets),
     model: (input.model || DEFAULT_AI_CONFIG.model).trim(),
-    temperature:
-      typeof input.temperature === "number" ? input.temperature : DEFAULT_AI_CONFIG.temperature,
+    temperature: clampTemperature(
+      typeof input.temperature === "number" ? input.temperature : DEFAULT_AI_CONFIG.temperature
+    ),
     authMode,
     umsToken: (input.umsToken || DEFAULT_AI_CONFIG.umsToken).trim(),
     apiKey: (input.apiKey || DEFAULT_AI_CONFIG.apiKey).trim(),
@@ -186,6 +195,86 @@ function parseStoredConfig(rawValue: unknown): AiServiceConfig | null {
   return null;
 }
 
+function stripConfigSecrets(config: AiServiceConfig): AiServiceConfig {
+  return { ...config, umsToken: "", apiKey: "" };
+}
+
+async function writeConfigToOfficeStores(config: AiServiceConfig): Promise<boolean> {
+  const serialized = JSON.stringify(config);
+  let persisted = false;
+
+  const runtimeStorage = getRuntimeStorage();
+  if (runtimeStorage) {
+    try {
+      await runtimeStorage.setItem(STORAGE_KEY, serialized);
+      persisted = true;
+    } catch {
+      // Ignore runtime storage failures and try roaming settings.
+    }
+  }
+
+  const roamingSettings = getRoamingSettings();
+  if (roamingSettings) {
+    try {
+      roamingSettings.set(STORAGE_KEY, config);
+
+      await new Promise<void>((resolve, reject) => {
+        roamingSettings.saveAsync((asyncResult) => {
+          if (asyncResult.status === Office.AsyncResultStatus.Succeeded) {
+            resolve();
+          } else {
+            reject(new Error(asyncResult.error.message));
+          }
+        });
+      });
+      persisted = true;
+    } catch {
+      // Ignore roaming settings failures.
+    }
+  }
+
+  return persisted;
+}
+
+async function migrateLocalStorageSecretsToOfficeStore(
+  config: AiServiceConfig,
+  officeConfig: AiServiceConfig | null
+): Promise<AiServiceConfig> {
+  let localConfig: AiServiceConfig | null = null;
+  try {
+    localConfig = parseStoredConfig(window.localStorage.getItem(STORAGE_KEY));
+  } catch {
+    return config;
+  }
+
+  if (!localConfig || (!localConfig.umsToken.trim() && !localConfig.apiKey.trim())) {
+    return config;
+  }
+
+  let merged = config;
+  if (!officeConfig || !officeConfig.umsToken.trim()) {
+    merged = { ...merged, umsToken: localConfig.umsToken };
+  }
+  if (!officeConfig || !officeConfig.apiKey.trim()) {
+    merged = { ...merged, apiKey: localConfig.apiKey };
+  }
+
+  if (!officeConfig || merged !== officeConfig) {
+    if (!(await writeConfigToOfficeStores(merged))) {
+      // Keep the localStorage copy until an Office store accepts the secret.
+      return config;
+    }
+  }
+
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(stripConfigSecrets(localConfig)));
+  } catch {
+    // Ignore: the secret is already migrated; sanitizing localStorage is best effort.
+  }
+
+  return merged;
+}
+
 export function loadAiServiceConfig(): AiServiceConfig {
   const roamingSettings = getRoamingSettings();
   if (roamingSettings) {
@@ -208,19 +297,26 @@ export function loadAiServiceConfig(): AiServiceConfig {
 }
 
 export async function loadAiServiceConfigAsync(): Promise<AiServiceConfig> {
+  let officeConfig: AiServiceConfig | null = null;
+
   const runtimeStorage = getRuntimeStorage();
   if (runtimeStorage) {
     try {
-      const runtimeConfig = parseStoredConfig(await runtimeStorage.getItem(STORAGE_KEY));
-      if (runtimeConfig) {
-        return runtimeConfig;
-      }
+      officeConfig = parseStoredConfig(await runtimeStorage.getItem(STORAGE_KEY));
     } catch {
       // Ignore runtime storage failures and continue with synchronous fallbacks.
     }
   }
 
-  return loadAiServiceConfig();
+  if (!officeConfig) {
+    const roamingSettings = getRoamingSettings();
+    if (roamingSettings) {
+      officeConfig = parseStoredConfig(roamingSettings.get(STORAGE_KEY));
+    }
+  }
+
+  const config = officeConfig || loadAiServiceConfig();
+  return migrateLocalStorageSecretsToOfficeStore(config, officeConfig);
 }
 
 export async function saveAiServiceConfig(config: AiServiceConfig): Promise<void> {
@@ -230,7 +326,7 @@ export async function saveAiServiceConfig(config: AiServiceConfig): Promise<void
   let lastError: Error | null = null;
 
   try {
-    window.localStorage.setItem(STORAGE_KEY, serialized);
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(stripConfigSecrets(normalized)));
     persisted = true;
   } catch (error) {
     lastError = error as Error;

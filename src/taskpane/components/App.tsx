@@ -506,6 +506,9 @@ export default function App(props: AppProps) {
   const dialogRef = React.useRef<Office.Dialog | null>(null);
   const currentDialogPayloadRef = React.useRef<ResultDialogPayload | null>(null);
   const activeRequestControllerRef = React.useRef<AbortController | null>(null);
+  const chatRequestControllerRef = React.useRef<AbortController | null>(null);
+  const keydownHandlerRef = React.useRef<(e: KeyboardEvent) => void>(() => {});
+  const dialogSendFailureReportedRef = React.useRef<boolean>(false);
   const isConfigReady = validateAiServiceConfig(config) === null;
 
 
@@ -566,6 +569,10 @@ export default function App(props: AppProps) {
   );
   const activePayload = selectedHistoryEntry?.payload || null;
   const resultText = activePayload?.text || "";
+  const diffHtml = React.useMemo(
+    () => formatDiffAsHtml(computeWordDiff(originalDraftForDiff, resultText)),
+    [originalDraftForDiff, resultText, diffViewMode]
+  );
 
   React.useEffect(() => {
     let isCancelled = false;
@@ -762,6 +769,15 @@ export default function App(props: AppProps) {
     };
   }, []);
 
+  React.useEffect(() => {
+    return () => {
+      if (toastTimeoutRef.current !== null) {
+        window.clearTimeout(toastTimeoutRef.current);
+        toastTimeoutRef.current = null;
+      }
+    };
+  }, []);
+
   if (!isOfficeInitialized) {
     return (
       <Progress
@@ -821,7 +837,8 @@ export default function App(props: AppProps) {
 
   const runAi = async (
     messages: { role: "system" | "user" | "assistant"; content: string }[],
-    onDeltaCustom?: (delta: string, accumulated: string) => void
+    onDeltaCustom?: (delta: string, accumulated: string) => void,
+    controllerOverride?: AbortController
   ) => {
     const validationError = validateAiServiceConfig(config);
     if (validationError) {
@@ -829,20 +846,27 @@ export default function App(props: AppProps) {
       throw new Error(validationError);
     }
 
-    if (activeRequestControllerRef.current) {
-      activeRequestControllerRef.current.abort();
-    }
+    let controller: AbortController;
+    if (controllerOverride) {
+      controller = controllerOverride;
+    } else {
+      if (activeRequestControllerRef.current) {
+        activeRequestControllerRef.current.abort();
+      }
 
-    const controller = new AbortController();
-    activeRequestControllerRef.current = controller;
-    setHasActiveRequest(true);
-    setStreamingResultText("");
+      controller = new AbortController();
+      activeRequestControllerRef.current = controller;
+      setHasActiveRequest(true);
+      setStreamingResultText("");
+    }
 
     try {
       return await createChatCompletion(config, messages, {
         signal: controller.signal,
         onDelta: (delta, accumulated) => {
-          setStreamingResultText(accumulated);
+          if (!controllerOverride) {
+            setStreamingResultText(accumulated);
+          }
           if (onDeltaCustom) {
             onDeltaCustom(delta, accumulated);
           }
@@ -885,8 +909,8 @@ export default function App(props: AppProps) {
     } finally {
       if (activeRequestControllerRef.current === controller) {
         activeRequestControllerRef.current = null;
+        setHasActiveRequest(false);
       }
-      setHasActiveRequest(false);
     }
   };
 
@@ -1088,8 +1112,38 @@ export default function App(props: AppProps) {
     } catch (error) {
       logError("Dialog message send failed", error);
       dialogRef.current = null;
+      if (!dialogSendFailureReportedRef.current) {
+        dialogSendFailureReportedRef.current = true;
+        showToast("Result window stopped responding; the result is shown in the task pane.");
+      }
       return false;
     }
+  };
+
+  const createDialogStreamSender = (basePayload: ResultDialogPayload) => {
+    let latestText = "";
+    let flushTimerId: number | null = null;
+
+    const flush = () => {
+      flushTimerId = null;
+      postResultToDialog({ ...basePayload, text: latestText });
+    };
+
+    return {
+      push: (text: string) => {
+        latestText = text;
+        if (flushTimerId === null) {
+          flushTimerId = window.setTimeout(flush, 150);
+        }
+      },
+      complete: (finalText: string) => {
+        if (flushTimerId !== null) {
+          window.clearTimeout(flushTimerId);
+          flushTimerId = null;
+        }
+        postResultToDialog({ ...basePayload, text: finalText });
+      },
+    };
   };
 
   const openOrUpdateResultDialog = async (payload: ResultDialogPayload) => {
@@ -1125,6 +1179,7 @@ export default function App(props: AppProps) {
 
           const dialog = asyncResult.value;
           dialogRef.current = dialog;
+          dialogSendFailureReportedRef.current = false;
 
           dialog.addEventHandler(Office.EventType.DialogEventReceived, () => {
             if (dialogRef.current === dialog) {
@@ -1405,6 +1460,7 @@ export default function App(props: AppProps) {
           logError("Initial dialog open failed", dialogErr);
         });
 
+        const streamToDialog = createDialogStreamSender(livePayload);
         const output = await runAi(
           buildReplyDraftMessages(
             enrichedThread,
@@ -1415,12 +1471,10 @@ export default function App(props: AppProps) {
             config.promptTemplates
           ),
           (_delta, accumulated) => {
-            postResultToDialog({
-              ...livePayload,
-              text: accumulated,
-            });
+            streamToDialog.push(accumulated);
           }
         );
+        streamToDialog.complete(output);
         await presentResult(
           createDialogPayload(
             initialTitle,
@@ -1466,6 +1520,7 @@ export default function App(props: AppProps) {
           logError("Initial dialog open failed", dialogErr);
         });
 
+        const streamToDialog = createDialogStreamSender(livePayload);
         const output = await runAi(
           buildImproveDraftMessages(
             optimizedDraft.text,
@@ -1475,12 +1530,10 @@ export default function App(props: AppProps) {
             config.promptTemplates
           ),
           (_delta, accumulated) => {
-            postResultToDialog({
-              ...livePayload,
-              text: accumulated,
-            });
+            streamToDialog.push(accumulated);
           }
         );
+        streamToDialog.complete(output);
         await presentResult(
           createDialogPayload(
             initialTitle,
@@ -1544,6 +1597,7 @@ export default function App(props: AppProps) {
           logError("Initial dialog open failed", dialogErr);
         });
 
+        const streamToDialog = createDialogStreamSender(livePayload);
         const output = await runAi(
           buildImproveReplyMessages(
             optimizedDraft.text,
@@ -1554,12 +1608,10 @@ export default function App(props: AppProps) {
             config.promptTemplates
           ),
           (_delta, accumulated) => {
-            postResultToDialog({
-              ...livePayload,
-              text: accumulated,
-            });
+            streamToDialog.push(accumulated);
           }
         );
+        streamToDialog.complete(output);
         await presentResult(
           createDialogPayload(
             initialTitle,
@@ -1603,15 +1655,14 @@ export default function App(props: AppProps) {
           logError("Initial dialog open failed", dialogErr);
         });
 
+        const streamToDialog = createDialogStreamSender(livePayload);
         const output = await runAi(
           buildActionItemsMessages(optimizedSource.text, targetLanguage),
           (_delta, accumulated) => {
-            postResultToDialog({
-              ...livePayload,
-              text: accumulated,
-            });
+            streamToDialog.push(accumulated);
           }
         );
+        streamToDialog.complete(output);
         await presentResult(
           createDialogPayload(
             initialTitle,
@@ -1651,6 +1702,7 @@ export default function App(props: AppProps) {
           logError("Initial dialog open failed", dialogErr);
         });
 
+        const streamToDialog = createDialogStreamSender(livePayload);
         const output = await runAi(
           buildSummaryMessages(
             optimizedSummarySource.text,
@@ -1658,12 +1710,10 @@ export default function App(props: AppProps) {
             config.promptTemplates
           ),
           (_delta, accumulated) => {
-            postResultToDialog({
-              ...livePayload,
-              text: accumulated,
-            });
+            streamToDialog.push(accumulated);
           }
         );
+        streamToDialog.complete(output);
         await presentResult(
           createDialogPayload(
             initialTitle,
@@ -1747,6 +1797,7 @@ export default function App(props: AppProps) {
           logError("Initial dialog open failed", dialogErr);
         });
 
+        const streamToDialog = createDialogStreamSender(livePayload);
         const output = await runAi(
           buildTranslationMessages(
             optimizedTranslationSource.text,
@@ -1754,12 +1805,10 @@ export default function App(props: AppProps) {
             config.promptTemplates
           ),
           (_delta, accumulated) => {
-            postResultToDialog({
-              ...livePayload,
-              text: accumulated,
-            });
+            streamToDialog.push(accumulated);
           }
         );
+        streamToDialog.complete(output);
         await presentResult(
           createDialogPayload(
             initialTitle,
@@ -1818,6 +1867,7 @@ export default function App(props: AppProps) {
           logError("Initial dialog open failed", dialogErr);
         });
 
+        const streamToDialog = createDialogStreamSender(livePayload);
         const output = await runAi(
           buildCustomPresetMessages(
             preset,
@@ -1830,12 +1880,10 @@ export default function App(props: AppProps) {
             length
           ),
           (_delta, accumulated) => {
-            postResultToDialog({
-              ...livePayload,
-              text: accumulated,
-            });
+            streamToDialog.push(accumulated);
           }
         );
+        streamToDialog.complete(output);
         await presentResult(
           createDialogPayload(
             initialTitle,
@@ -1990,10 +2038,17 @@ export default function App(props: AppProps) {
   };
 
   const onAskChat = async () => {
+    let chatController: AbortController | null = null;
     try {
       if (!chatQuestion.trim()) {
         throw new Error("Enter a question for chat.");
       }
+
+      if (chatRequestControllerRef.current) {
+        chatRequestControllerRef.current.abort();
+      }
+      chatController = new AbortController();
+      chatRequestControllerRef.current = chatController;
 
       setIsChatLoading(true);
       const source = await resolveWorkflowSourceText(true, preferredScope !== "selection");
@@ -2004,7 +2059,9 @@ export default function App(props: AppProps) {
           chatQuestion.trim(),
           config.preferredLanguage,
           config.promptTemplates
-        )
+        ),
+        undefined,
+        chatController
       );
 
       setChatResponse(output);
@@ -2020,81 +2077,73 @@ export default function App(props: AppProps) {
       logError("Chat failed", error);
       setError((error as Error).message);
     } finally {
+      if (chatController && chatRequestControllerRef.current === chatController) {
+        chatRequestControllerRef.current = null;
+      }
       setIsChatLoading(false);
     }
   };
 
-  React.useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      const isInput =
-        e.target instanceof HTMLInputElement ||
-        e.target instanceof HTMLTextAreaElement ||
-        (e.target instanceof HTMLElement && e.target.isContentEditable);
+  const handleKeyDown = (e: KeyboardEvent) => {
+    const isInput =
+      e.target instanceof HTMLInputElement ||
+      e.target instanceof HTMLTextAreaElement ||
+      (e.target instanceof HTMLElement && e.target.isContentEditable);
 
-      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
-        e.preventDefault();
-        if (!isLoading && !hasActiveRequest && isConfigReady) {
-          void onRunWorkflow();
-        }
-      } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "R" || e.key === "r")) {
-        e.preventDefault();
-        if (hostMode === "compose" && resultText) {
-          void onApplyToDraft();
-        }
-      } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "C" || e.key === "c")) {
-        e.preventDefault();
-        if (resultText) {
-          void onCopyResult();
-        }
-      } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "I" || e.key === "i")) {
-        e.preventDefault();
-        if (hostMode === "compose" && resultText) {
-          void onInsertAtCursor();
-        }
-      } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "S" || e.key === "s")) {
-        e.preventDefault();
-        if (hostMode === "compose" && !isSuggestingSubject && !hasActiveRequest && isConfigReady) {
-          void onSuggestSubject();
-        }
-      } else if (e.key === "?" && !isInput && !e.ctrlKey && !e.metaKey && !e.altKey) {
-        e.preventDefault();
-        setIsShortcutsVisible((prev) => !prev);
-      } else if (e.key === "Escape") {
-        if (isPresetManagerVisible) {
-          setIsPresetManagerVisible(false);
-          setEditingPreset(null);
-        } else if (isShortcutsVisible) {
-          setIsShortcutsVisible(false);
-        } else if (isPromptEditorVisible) {
-          setIsPromptEditorVisible(false);
-        } else if (isConfigVisible) {
-          setIsConfigVisible(false);
-        } else if (hasActiveRequest) {
-          onCancelActiveRequest();
-        }
+    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+      e.preventDefault();
+      if (!isLoading && !hasActiveRequest && isConfigReady) {
+        void onRunWorkflow();
       }
+    } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "R" || e.key === "r")) {
+      e.preventDefault();
+      if (hostMode === "compose" && resultText) {
+        void onApplyToDraft();
+      }
+    } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "C" || e.key === "c")) {
+      e.preventDefault();
+      if (resultText) {
+        void onCopyResult();
+      }
+    } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "I" || e.key === "i")) {
+      e.preventDefault();
+      if (hostMode === "compose" && resultText) {
+        void onInsertAtCursor();
+      }
+    } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === "S" || e.key === "s")) {
+      e.preventDefault();
+      if (hostMode === "compose" && !isSuggestingSubject && !hasActiveRequest && isConfigReady) {
+        void onSuggestSubject();
+      }
+    } else if (e.key === "?" && !isInput && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      e.preventDefault();
+      setIsShortcutsVisible((prev) => !prev);
+    } else if (e.key === "Escape") {
+      if (isPresetManagerVisible) {
+        setIsPresetManagerVisible(false);
+        setEditingPreset(null);
+      } else if (isShortcutsVisible) {
+        setIsShortcutsVisible(false);
+      } else if (isPromptEditorVisible) {
+        setIsPromptEditorVisible(false);
+      } else if (isConfigVisible) {
+        setIsConfigVisible(false);
+      } else if (hasActiveRequest) {
+        onCancelActiveRequest();
+      }
+    }
+  };
+
+  keydownHandlerRef.current = handleKeyDown;
+
+  React.useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      keydownHandlerRef.current(e);
     };
 
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [
-    isLoading,
-    hasActiveRequest,
-    isConfigReady,
-    hostMode,
-    resultText,
-    workflow,
-    direction,
-    tone,
-    formality,
-    length,
-    targetLanguage,
-    isSuggestingSubject,
-    isShortcutsVisible,
-    isPromptEditorVisible,
-    isPresetManagerVisible,
-    isConfigVisible,
-  ]);
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   return (
 
@@ -2258,7 +2307,8 @@ export default function App(props: AppProps) {
             </div>
             {config.authMode === "umsToken" && (
               <p className="taskpane-config-state">
-                Access token is fetched via `/v1/token/refresh` and kept only in memory.
+                The UMS token is stored in Office roaming settings only, never in browser storage.
+                The access token fetched via `/v1/token/refresh` is kept only in memory.
               </p>
             )}
             {config.authMode === "apiKey" && (
@@ -2613,9 +2663,7 @@ export default function App(props: AppProps) {
                 originalDraftForDiff ? (
                   <div
                     className="diff-container"
-                    dangerouslySetInnerHTML={{
-                      __html: formatDiffAsHtml(computeWordDiff(originalDraftForDiff, resultText)),
-                    }}
+                    dangerouslySetInnerHTML={{ __html: diffHtml }}
                   />
                 ) : (
                   <div
