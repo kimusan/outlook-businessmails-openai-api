@@ -428,6 +428,27 @@ test("buildSegmentBatches: greedy, never splits a segment, respects budget", () 
   );
 });
 
+test("buildSegmentBatches: maxSegmentsPerBatch caps batch size (small responses survive)", () => {
+  const seg = (id) => ({ id, kind: "text", parts: ["word"] });
+  const many = Array.from({ length: 94 }, (_, i) => seg(`t${i}`)); // the reported failing shape
+
+  const batches = buildSegmentBatches(many, 4000, 30);
+  assert.ok(
+    batches.every((batch) => batch.length <= 30),
+    "no batch exceeds the segment cap"
+  );
+  const flat = batches.flat();
+  assert.deepEqual(flat, many, "order preserved, each segment exactly once");
+  assert.equal(batches.length, Math.ceil(94 / 30), "94 segments fill 4 batches of <=30");
+
+  // Cap omitted (undefined): all segments fit one batch (backwards compatible).
+  assert.equal(buildSegmentBatches(many, 4000).length, 1);
+  // Cap smaller than any batch content still yields batches (never drops data).
+  const tiny = buildSegmentBatches(many, 4000, 1);
+  assert.equal(tiny.length, 94);
+  assert.deepEqual(tiny.flat(), many);
+});
+
 // --- (i) title="a>b" round-trips escaped ---
 test('f4: title="a>b" survives the round trip escaped', () => {
   const input = loadFixture("f4-edge-stew.html");

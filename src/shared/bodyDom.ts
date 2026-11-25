@@ -399,23 +399,29 @@ export function serializeMailBody(parsed: ParsedBody): string {
 }
 
 /*
- * Greedy fill by total part characters. A segment is never split across
- * batches; a single segment larger than the budget gets a batch of its own.
+ * Greedy fill by total part characters and segment count. A segment is
+ * never split across batches; a single segment larger than the budget gets
+ * a batch of its own. Capping the segment count keeps responses small:
+ * large batch responses get truncated server-side, which wastes the whole
+ * request (dstranslator caps at 25 segments for the same reason).
  */
 export function buildSegmentBatches(
   segments: BodyDomSegment[],
-  maxCharsPerBatch: number
+  maxCharsPerBatch: number,
+  maxSegmentsPerBatch?: number
 ): BodyDomSegment[][] {
   const batches: BodyDomSegment[][] = [];
   if (!segments || segments.length === 0) {
     return batches;
   }
   const budget = maxCharsPerBatch > 0 ? maxCharsPerBatch : 1;
+  const maxSegments =
+    maxSegmentsPerBatch && maxSegmentsPerBatch > 0 ? maxSegmentsPerBatch : segments.length;
   let current: BodyDomSegment[] = [];
   let currentChars = 0;
   for (const segment of segments) {
     const chars = segment.parts.reduce((sum, part) => sum + (part ? part.length : 0), 0);
-    if (current.length > 0 && currentChars + chars > budget) {
+    if (current.length > 0 && (currentChars + chars > budget || current.length >= maxSegments)) {
       batches.push(current);
       current = [];
       currentChars = 0;

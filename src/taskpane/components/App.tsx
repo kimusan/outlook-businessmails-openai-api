@@ -93,6 +93,10 @@ import {
   serializeMailBody,
 } from "../../shared/bodyDom";
 import type { BodyDomSegment } from "../../shared/bodyDom";
+import {
+  IN_PLACE_RETRY_SUFFIX,
+  parseInPlaceTranslationResponse,
+} from "../../shared/translationProtocol";
 
 export interface AppProps {
   title: string;
@@ -131,8 +135,11 @@ const MAX_HISTORY_PER_ITEM = 20;
 const MAX_HISTORY_ITEMS = 80;
 const TRANSLATION_UNDO_STORAGE_KEY = "outlookAiAssistant.translationUndo";
 
-const IN_PLACE_RETRY_SUFFIX =
-  "Your previous response was not valid JSON with matching keys/array lengths. Return ONLY the corrected JSON object.";
+/* Segment cap per translation batch: large batch responses get truncated
+ * server-side, which fails the whole batch; smaller batches also surface
+ * progress in the live view much sooner. */
+const TRANSLATION_BATCH_MAX_SEGMENTS = 30;
+const TRANSLATION_BATCH_MAX_CHARS = 4000;
 
 type TranslationUndoSnapshot = {
   itemId: string;
@@ -164,82 +171,6 @@ function saveTranslationUndoSnapshot(snapshot: TranslationUndoSnapshot): void {
   } catch {
     // Ignore persistence failures; restore will simply be unavailable.
   }
-}
-
-function extractJsonObjectText(raw: string): string {
-  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  const candidate = (fenced ? fenced[1] : raw).trim();
-  const start = candidate.indexOf("{");
-  const end = candidate.lastIndexOf("}");
-  if (start < 0 || end <= start) {
-    return "";
-  }
-
-  return candidate.slice(start, end + 1);
-}
-
-function parseInPlaceTranslationResponse(
-  raw: string,
-  batch: BodyDomSegment[],
-  extra?: Record<string, string[]>
-): { mapping: Record<string, string[]>; invalidIds: string[] } {
-  // Validation rules: the response must be a JSON object containing every sent
-  // id (segments + extras), each mapped to a string array of the same length,
-  // with no injected markup (<tag) inside translated strings. Invalid ids keep
-  // their original text.
-  const expected: Record<string, string[]> = {};
-  for (const segment of batch) {
-    expected[segment.id] = segment.parts;
-  }
-  if (extra) {
-    for (const [key, value] of Object.entries(extra)) {
-      expected[key] = value;
-    }
-  }
-
-  const jsonText = extractJsonObjectText(raw);
-  if (!jsonText) {
-    return { mapping: {}, invalidIds: Object.keys(expected) };
-  }
-
-  let parsedResponse: unknown;
-  try {
-    parsedResponse = JSON.parse(jsonText);
-  } catch {
-    return { mapping: {}, invalidIds: Object.keys(expected) };
-  }
-
-  if (!parsedResponse || typeof parsedResponse !== "object" || Array.isArray(parsedResponse)) {
-    return { mapping: {}, invalidIds: Object.keys(expected) };
-  }
-
-  const responseRecord = parsedResponse as Record<string, unknown>;
-  const mapping: Record<string, string[]> = {};
-  const invalidIds: string[] = [];
-
-  for (const [id, parts] of Object.entries(expected)) {
-    const value = responseRecord[id];
-    if (Array.isArray(value) && value.length === parts.length) {
-      let valid = true;
-      const strings: string[] = [];
-      for (const entry of value) {
-        if (typeof entry !== "string" || /<[a-zA-Z/!]/.test(entry)) {
-          valid = false;
-          break;
-        }
-        strings.push(entry);
-      }
-
-      if (valid) {
-        mapping[id] = strings;
-        continue;
-      }
-    }
-
-    invalidIds.push(id);
-  }
-
-  return { mapping, invalidIds };
 }
 
 const QUICK_REPLY_INTENTS = [
@@ -1395,6 +1326,62 @@ export default function App(props: AppProps) {
   };
 
 
+  /*
+   * Translate one batch with a corrective retry that re-sends ONLY the ids
+   * that failed validation (salvaged partial results are kept). Returns the
+   * accumulated mapping plus the ids still missing after both attempts.
+   */
+  const translateSegmentBatch = async (
+    batch: BodyDomSegment[],
+    extra: Record<string, string[]> | undefined,
+    controller: AbortController
+  ): Promise<{ mapping: Record<string, string[]>; invalidIds: string[] }> => {
+    const mapping: Record<string, string[]> = {};
+    let currentBatch = batch;
+    let currentExtra = extra;
+    let invalidIds: string[] = [];
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (currentBatch.length === 0 && !currentExtra) {
+        break; // nothing left to retry
+      }
+      let messages = buildInPlaceTranslationMessages(
+        currentBatch,
+        targetLanguage,
+        config.promptTemplates,
+        currentExtra
+      );
+      if (attempt > 0) {
+        messages = [
+          messages[0],
+          { ...messages[1], content: `${messages[1].content}\n\n${IN_PLACE_RETRY_SUFFIX}` },
+        ];
+      }
+
+      const output = await runAi(messages, undefined, controller);
+      const validation = parseInPlaceTranslationResponse(output, currentBatch, currentExtra);
+      Object.assign(mapping, validation.mapping);
+      invalidIds = validation.invalidIds;
+
+      if (invalidIds.length === 0) {
+        break;
+      }
+
+      if (attempt === 0) {
+        // Retry only what failed; keep everything already salvaged.
+        currentBatch = currentBatch.filter((segment) => invalidIds.includes(segment.id));
+        currentExtra =
+          currentExtra && invalidIds.includes("subject") ? { subject: currentExtra.subject } : undefined;
+        appendDebugLog("In-place translation: batch partially invalid, retrying failed ids", {
+          invalidIds: invalidIds.length,
+          responseExcerpt: `${(output || "").slice(0, 200)} … ${(output || "").slice(-200)}`,
+        });
+      }
+    }
+
+    return { mapping, invalidIds };
+  };
+
   const presentResult = async (
     payload: ResultDialogPayload,
     workflowKey: Workflow
@@ -2019,7 +2006,11 @@ export default function App(props: AppProps) {
             return;
           }
 
-          const batches = buildSegmentBatches(parsedBody.segments, 4000);
+          const batches = buildSegmentBatches(
+            parsedBody.segments,
+            TRANSLATION_BATCH_MAX_CHARS,
+            TRANSLATION_BATCH_MAX_SEGMENTS
+          );
           const mapping: Record<string, string[]> = {};
           const keptOriginalIds: string[] = [];
 
@@ -2031,45 +2022,18 @@ export default function App(props: AppProps) {
                 : `Translating message to ${targetLanguage}...`
             );
 
+            activeRequestControllerRef.current = translationController;
+            setHasActiveRequest(true);
             const extra = batchIndex === 0 ? firstBatchExtra : undefined;
-            let messages = buildInPlaceTranslationMessages(
+            const { mapping: batchMapping, invalidIds } = await translateSegmentBatch(
               batch,
-              targetLanguage,
-              config.promptTemplates,
-              extra
+              extra,
+              translationController
             );
-            let batchMapping: Record<string, string[]> | null = null;
-            let invalidIds: string[] = [];
-
-            for (let attempt = 0; attempt < 2; attempt++) {
-              activeRequestControllerRef.current = translationController;
-              setHasActiveRequest(true);
-              const output = await runAi(messages, undefined, translationController);
-              const validation = parseInPlaceTranslationResponse(output, batch, extra);
-              batchMapping = validation.mapping;
-              invalidIds = validation.invalidIds;
-
-              if (invalidIds.length === 0) {
-                break;
-              }
-
-              if (attempt === 0) {
-                // One corrective retry for malformed JSON or mismatched structure.
-                messages = [
-                  messages[0],
-                  {
-                    ...messages[1],
-                    content: `${messages[1].content}\n\n${IN_PLACE_RETRY_SUFFIX}`,
-                  },
-                ];
-              }
-            }
 
             // Partial results are better than none: keep originals only for ids
             // that failed validation in both attempts.
-            if (batchMapping) {
-              Object.assign(mapping, batchMapping);
-            }
+            Object.assign(mapping, batchMapping);
             keptOriginalIds.push(...invalidIds);
           }
 
@@ -2112,7 +2076,11 @@ export default function App(props: AppProps) {
             return;
           }
 
-          const batches = buildSegmentBatches(parsedBody.segments, 4000);
+          const batches = buildSegmentBatches(
+            parsedBody.segments,
+            TRANSLATION_BATCH_MAX_CHARS,
+            TRANSLATION_BATCH_MAX_SEGMENTS
+          );
           const mailCopyHtml = serializeMailBody(parsedBody);
 
           const noteLines: string[] = [
@@ -2186,70 +2154,43 @@ export default function App(props: AppProps) {
             batch: BodyDomSegment[],
             extra?: Record<string, string[]>
           ) => {
-            let messages = buildInPlaceTranslationMessages(
-              batch,
-              targetLanguage,
-              config.promptTemplates,
-              extra
-            );
-            let batchMapping: Record<string, string[]> | null = null;
-            let invalidIds: string[] = [];
-
-            for (let attempt = 0; attempt < 2; attempt++) {
-              const batchController = new AbortController();
-              childControllers.add(batchController);
-              const abortChild = () => batchController.abort();
-              translationController.signal.addEventListener("abort", abortChild);
-              try {
-                const output = await runAi(messages, undefined, batchController);
-                const validation = parseInPlaceTranslationResponse(output, batch, extra);
-                batchMapping = validation.mapping;
-                invalidIds = validation.invalidIds;
-
-                if (invalidIds.length === 0) {
-                  break;
-                }
-
-                if (attempt === 0) {
-                  // One corrective retry for malformed JSON or mismatched structure.
-                  messages = [
-                    messages[0],
-                    {
-                      ...messages[1],
-                      content: `${messages[1].content}\n\n${IN_PLACE_RETRY_SUFFIX}`,
-                    },
-                  ];
-                }
-              } finally {
-                translationController.signal.removeEventListener("abort", abortChild);
-                childControllers.delete(batchController);
-              }
+            // Child controller so Cancel/Escape aborts this batch's in-flight
+            // request too; translateSegmentBatch owns the corrective retry
+            // (re-sending only ids that failed validation).
+            const batchController = new AbortController();
+            childControllers.add(batchController);
+            const abortChild = () => batchController.abort();
+            translationController.signal.addEventListener("abort", abortChild);
+            try {
+              return await translateSegmentBatch(batch, extra, batchController);
+            } finally {
+              translationController.signal.removeEventListener("abort", abortChild);
+              childControllers.delete(batchController);
             }
-
-            return { batchMapping, invalidIds };
           };
 
           const worker = async (): Promise<void> => {
             while (cursor < batches.length && !translationController.signal.aborted) {
               const batchIndex = cursor++;
               const extra = batchIndex === 0 ? firstBatchExtra : undefined;
-              const { batchMapping, invalidIds } = await translateBatch(batches[batchIndex], extra);
+              const { mapping: batchMapping, invalidIds } = await translateBatch(
+                batches[batchIndex],
+                extra
+              );
               if (translationController.signal.aborted) {
                 return; // discard results after Cancel
               }
 
               // Partial results are better than none: keep originals only
               // for ids that failed validation in both attempts.
-              if (batchMapping) {
-                if (batchMapping.subject && batchMapping.subject.length > 0) {
-                  translatedSubjectHtml = escapeHtmlText(batchMapping.subject[0]);
-                  delete batchMapping.subject;
-                }
-                for (const id of Object.keys(batchMapping)) {
-                  mergedMapping[id] = batchMapping[id];
-                }
-                translatedCount += Object.keys(batchMapping).length;
+              if (batchMapping.subject && batchMapping.subject.length > 0) {
+                translatedSubjectHtml = escapeHtmlText(batchMapping.subject[0]);
+                delete batchMapping.subject;
               }
+              for (const id of Object.keys(batchMapping)) {
+                mergedMapping[id] = batchMapping[id];
+              }
+              translatedCount += Object.keys(batchMapping).length;
               keptOriginalCount += invalidIds.filter((id) => id !== "subject").length;
               batchDone += 1;
               setStatus(
