@@ -1,0 +1,34 @@
+<HTML>
+<HEAD>
+<TITLE>edge stew</TITLE>
+<STYLE>
+ BODY { background: #ffeeee } /* do not translate me */
+ .cls::before { content: "pseudo"; }
+</STYLE>
+<SCRIPT>
+ var notTranslatable = "should not be translated: <p>hi</p>";
+ if (1 < 2 && 3 > 2) { alert("x>y"); }
+</SCRIPT>
+</HEAD>
+<BODY>
+<DIV ID="Upper">
+<P title="a>b">Attribute value containing a greater-than sign.</P>
+<P>Unclosed paragraph one
+<P>Unclosed paragraph two
+<UL>
+<LI>first item
+<LI>second item
+</UL>
+<P>Sentence one<br>Sentence two<br>Sentence three <!-- interleaved comment --> middle text <!-- another --> tail.</P>
+<A HREF="https://example.com/x?a=1&b=2"><IMG SRC="cid:image002.png@01DAAA.BBB" ALT="Chart of results"></A>
+<p>Entities: &amp; &lt; &gt; &quot; &#39; &nbsp; &#x1F600; café</p>
+<PRE>
+  preformatted
+    keep   spacing
+</PRE>
+<TABLE><TR><TD>cell a<TD>cell b</TABLE>
+<p>lowercase after uppercase</p>
+<div data-config='{"key":"value>inside"}'>JSON-ish attribute</div>
+</DIV>
+</BODY>
+</HTML>

@@ -38,6 +38,7 @@
     "start:desktop": "office-addin-debugging start manifest.xml desktop --no-debug",
     "start:web": "office-addin-debugging start manifest.xml web --no-debug",
     "stop": "office-addin-debugging stop manifest.xml",
+    "test": "node test/bodyDom.test.mjs",
     "validate": "office-addin-manifest validate manifest.xml",
     "watch": "webpack --mode development --watch"
   },
@@ -62,6 +63,7 @@
     "file-loader": "^6.2.0",
     "html-loader": "^4.1.0",
     "html-webpack-plugin": "^5.5.0",
+    "jsdom": "^29.1.1",
     "less": "^3.9.0",
     "less-loader": "^10.0.1",
     "office-addin-cli": "^2.0.6",
