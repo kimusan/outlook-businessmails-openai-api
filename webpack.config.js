@@ -1,6 +1,7 @@
 /* eslint-disable no-undef */
 
 const path = require("path");
+const fs = require("fs");
 const devCerts = require("office-addin-dev-certs");
 const CopyWebpackPlugin = require("copy-webpack-plugin");
 const HtmlWebpackPlugin = require("html-webpack-plugin");
@@ -28,6 +29,21 @@ function normalizeBaseUrl(raw) {
 const urlProd = normalizeBaseUrl(process.env.ADDIN_BASE_URL);
 
 async function getHttpsOptions() {
+  // Prefer the packaged host's certs (release/local-host/certs). Their CA is
+  // already trusted on machines that ran trust-local-cert.cmd (the packaged
+  // exe has been serving the add-in with them), and they are long-lived.
+  // office-addin-dev-certs regenerates a fresh CA roughly monthly; each new
+  // CA must be re-imported into the OS trust store or Outlook's WebView
+  // blocks the taskpane with "not signed by a valid certificate".
+  const releaseCertPath = path.resolve(__dirname, "release/local-host/certs/localhost.pem");
+  const releaseKeyPath = path.resolve(__dirname, "release/local-host/certs/localhost-key.pem");
+  if (fs.existsSync(releaseCertPath) && fs.existsSync(releaseKeyPath)) {
+    return {
+      cert: fs.readFileSync(releaseCertPath),
+      key: fs.readFileSync(releaseKeyPath),
+    };
+  }
+
   const httpsOptions = await devCerts.getHttpsServerOptions();
   return { ca: httpsOptions.ca, key: httpsOptions.key, cert: httpsOptions.cert };
 }
@@ -143,7 +159,7 @@ module.exports = async (env, options) => {
       },
       server: {
         type: "https",
-        options: env.WEBPACK_BUILD || options.https !== undefined ? options.https : await getHttpsOptions(),
+        options: options.https !== undefined ? options.https : await getHttpsOptions(),
       },
       port: process.env.npm_package_config_dev_server_port || 3000,
     },
