@@ -1,7 +1,61 @@
 /* eslint-disable no-undef */
 /* global window */
 
-const DANGEROUS_TAGS = new Set(["script", "iframe", "object", "embed", "template"]);
+import DOMPurify from "dompurify";
+
+/*
+ * Tags removed unconditionally. DOMPurify's default allowlist already drops
+ * script/iframe/object/embed, noscript/noembed/noframes/xmp, style/meta/link
+ * and form controls, but FORBID_TAGS enforces it regardless of any future
+ * default-profile change and also removes svg/math (not needed for rendering
+ * translated email HTML here) and template (removed by the previous sanitizer).
+ */
+const FORBIDDEN_TAGS = [
+  "noscript",
+  "noembed",
+  "noframes",
+  "xmp",
+  "style",
+  "meta",
+  "link",
+  "form",
+  "input",
+  "svg",
+  "math",
+  "template",
+];
+
+/*
+ * DOMPurify's default URI regexp (cid: kept for Outlook inline images) plus
+ * data:image/ so inline email images still display. Generic data: URIs stay
+ * blocked; the hook below narrows data:image/ to img@src only, so it can never
+ * be used on href/src of active or navigational elements.
+ */
+const ALLOWED_URI_REGEXP =
+  /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|data:image\/):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i;
+
+DOMPurify.addHook("afterSanitizeAttributes", (node) => {
+  if (node.nodeType !== 1 /* ELEMENT_NODE */) {
+    return;
+  }
+
+  const element = node as Element;
+
+  for (const attribute of Array.from(element.attributes)) {
+    const name = attribute.name.toLowerCase();
+    const isImageSrc = element.tagName.toLowerCase() === "img" && name === "src";
+    if (!isImageSrc && attribute.value.trim().toLowerCase().startsWith("data:")) {
+      element.removeAttribute(attribute.name);
+    }
+  }
+
+  if (
+    element.tagName.toLowerCase() === "a" &&
+    (element.getAttribute("target") || "").toLowerCase() === "_blank"
+  ) {
+    element.setAttribute("rel", "noopener noreferrer");
+  }
+});
 
 function escapeHtml(input: string): string {
   return input
@@ -25,22 +79,18 @@ function applyInlineFormatting(input: string): string {
     );
 }
 
-function isSafeUri(value: string): boolean {
-  const normalized = value.trim().toLowerCase();
-  if (!normalized) {
-    return false;
+export function sanitizeHtmlFragment(input: string): string {
+  if (typeof window === "undefined" || typeof window.DOMParser === "undefined") {
+    return escapeHtml(input);
   }
 
-  return (
-    normalized.startsWith("http://") ||
-    normalized.startsWith("https://") ||
-    normalized.startsWith("mailto:") ||
-    normalized.startsWith("tel:") ||
-    normalized.startsWith("cid:") ||
-    normalized.startsWith("data:") ||
-    normalized.startsWith("#") ||
-    normalized.startsWith("/")
-  );
+  return DOMPurify.sanitize(input, {
+    FORBID_TAGS: FORBIDDEN_TAGS,
+    ALLOWED_URI_REGEXP,
+    // DOMPurify's defaults drop target; keep it (the old sanitizer preserved
+    // target="_blank" and the hook above adds rel="noopener noreferrer").
+    ADD_ATTR: ["target"],
+  });
 }
 
 export function containsHtmlMarkup(text: string): boolean {
@@ -54,81 +104,6 @@ export function containsHtmlMarkup(text: string): boolean {
   }
 
   return /<(br|hr|img|meta|link|input)\b/i.test(text);
-}
-
-export function sanitizeHtmlFragment(input: string): string {
-  if (typeof window === "undefined" || typeof window.DOMParser === "undefined") {
-    return escapeHtml(input);
-  }
-
-  const parser = new window.DOMParser();
-  const parsed = parser.parseFromString(`<div>${input}</div>`, "text/html");
-  const container = parsed.body.firstElementChild as HTMLElement | null;
-  if (!container) {
-    return escapeHtml(input);
-  }
-
-  const sanitizeNode = (node: Node) => {
-    if (node.nodeType === Node.COMMENT_NODE) {
-      node.parentNode?.removeChild(node);
-      return;
-    }
-
-    if (node.nodeType !== Node.ELEMENT_NODE) {
-      return;
-    }
-
-    const element = node as HTMLElement;
-    const tagName = element.tagName.toLowerCase();
-
-    if (DANGEROUS_TAGS.has(tagName)) {
-      element.remove();
-      return;
-    }
-
-    const attributes = Array.from(element.attributes) as Attr[];
-    for (const attribute of attributes) {
-      const name = attribute.name.toLowerCase();
-      const value = attribute.value || "";
-
-      if (name.startsWith("on") || name === "srcdoc") {
-        element.removeAttribute(attribute.name);
-        continue;
-      }
-
-      if (
-        (name === "href" || name === "src" || name === "xlink:href" || name === "formaction") &&
-        !isSafeUri(value)
-      ) {
-        element.removeAttribute(attribute.name);
-        continue;
-      }
-    }
-
-    if (tagName === "a") {
-      const href = element.getAttribute("href");
-      if (href && !isSafeUri(href)) {
-        element.removeAttribute("href");
-      }
-
-      const target = (element.getAttribute("target") || "").toLowerCase();
-      if (target === "_blank") {
-        element.setAttribute("rel", "noopener noreferrer");
-      }
-    }
-
-    const children = Array.from(element.childNodes);
-    for (const child of children) {
-      sanitizeNode(child);
-    }
-  };
-
-  const nodes = Array.from(container.childNodes);
-  for (const node of nodes) {
-    sanitizeNode(node);
-  }
-
-  return container.innerHTML;
 }
 
 function formatStructuredText(text: string): string {
