@@ -8,11 +8,62 @@ import * as ReactDOM from "react-dom";
 
 /* global document, Office, module, require */
 
+declare const __TASKPANE_BUILD_ID__: string;
+
 initializeIcons();
 
 let isOfficeInitialized = false;
 
 const title = "Outlook AI Assistant by Kim Schulz";
+
+// --- Boot diagnostics -------------------------------------------------------
+// React only renders inside Office.onReady. If office.js never loads (CSP,
+// offline CDN) or the host handshake stalls, the pane would be a blank gray
+// area with no console visible to the user. Report the startup stage in the
+// boot placeholder instead so failures cannot stay silent.
+const bootStatus = document.getElementById("boot-status");
+let reactMounted = false;
+
+const showBootStatus = (message: string) => {
+  if (bootStatus && !reactMounted) {
+    bootStatus.textContent = message;
+  }
+};
+
+showBootStatus(`Starting\u2026 (build ${__TASKPANE_BUILD_ID__})`);
+
+// Script/resource load failures (e.g. office.js blocked or unreachable) do
+// not bubble, so capture them on the window phase.
+window.addEventListener(
+  "error",
+  (event) => {
+    const target = event.target as HTMLElement | null;
+    const src = target ? (target as HTMLScriptElement).src : undefined;
+    if (src) {
+      showBootStatus(`Failed to load ${src}`);
+    } else if (event.message) {
+      showBootStatus(`Startup error: ${event.message}`);
+    }
+  },
+  true
+);
+
+window.addEventListener("unhandledrejection", (event) => {
+  const reason = (event as PromiseRejectionEvent).reason;
+  const message = reason && reason.message ? reason.message : String(reason);
+  showBootStatus(`Startup error: ${message}`);
+});
+
+window.setTimeout(() => {
+  if (!reactMounted) {
+    showBootStatus(
+      `Office.js did not finish initializing (build ${__TASKPANE_BUILD_ID__}). ` +
+        `Office API present: ${typeof Office !== "undefined"}. ` +
+        "Close and reopen this pane, or restart Outlook."
+    );
+  }
+}, 15000);
+// -----------------------------------------------------------------------------
 
 const render = (Component) => {
   ReactDOM.render(
@@ -25,6 +76,7 @@ const render = (Component) => {
     </AppContainer>,
     document.getElementById("container")
   );
+  reactMounted = true;
 };
 
 /* Render application after Office initializes */

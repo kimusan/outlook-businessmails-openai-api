@@ -22,7 +22,14 @@
 </head>
 
 <body class="ms-font-m ms-Fabric">
-    <div id="container"></div>
+    <div id="container">
+        <!-- Boot placeholder: replaced by React on mount. If it stays visible,
+             the bundle never ran or Office.onReady never fired. -->
+        <div class="boot-placeholder">
+            <div class="boot-title">Outlook AI Assistant</div>
+            <div class="boot-status" id="boot-status">Loading&hellip;</div>
+        </div>
+    </div>
 </body>
 
 </html>

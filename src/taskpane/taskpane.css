@@ -41,6 +41,35 @@ body {
   --app-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
 }
 
+/* Boot placeholder (see src/taskpane/taskpane.html): shown until React
+   mounts; the bundle updates its status text if startup stalls. */
+.boot-placeholder {
+  flex: 0 0 auto;
+  min-height: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px;
+  background: var(--app-bg);
+  color: var(--app-text);
+  text-align: center;
+  word-break: break-word;
+}
+
+.boot-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.boot-status {
+  font-size: 12.5px;
+  color: var(--app-muted);
+}
+
+
 .ms-welcome {
   min-height: 100%;
   height: 100%;

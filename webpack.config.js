@@ -2,12 +2,26 @@
 
 const path = require("path");
 const fs = require("fs");
+const { execSync } = require("child_process");
+const webpack = require("webpack");
 const devCerts = require("office-addin-dev-certs");
 const CopyWebpackPlugin = require("copy-webpack-plugin");
 const HtmlWebpackPlugin = require("html-webpack-plugin");
 const { createDevProxyMiddleware } = require("./local-host/dev-proxy.cjs");
 
 const urlDev = "https://localhost:3000/";
+
+// Stamped into the bundle and shown by the boot placeholder so a stale
+// WebView-cached bundle can be told apart from the current build.
+function getBuildId() {
+  let revision = "unknown";
+  try {
+    revision = execSync("git rev-parse --short HEAD", { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+  } catch (err) {
+    // git may be unavailable in packaging environments
+  }
+  return `${revision} ${new Date().toISOString().slice(0, 16).replace("T", " ")} UTC`;
+}
 
 function normalizeBaseUrl(raw) {
   if (!raw) {
@@ -110,6 +124,9 @@ module.exports = async (env, options) => {
       ],
     },
     plugins: [
+      new webpack.DefinePlugin({
+        __TASKPANE_BUILD_ID__: JSON.stringify(getBuildId()),
+      }),
       new CopyWebpackPlugin({
         patterns: [
           {
