@@ -2,6 +2,7 @@ import type { ChatMessage } from "./aiClient";
 import { limitWords } from "./outlookContext";
 import { containsHtmlMarkup } from "./richText";
 import type { CustomPreset } from "./customPresets";
+import type { BodyDomSegment } from "./bodyDom";
 
 export type ToneOption = "neutral" | "friendly" | "formal" | "concise";
 export type FormalityOption = "balanced" | "informal" | "formal";
@@ -17,6 +18,8 @@ export type PromptTemplateKey =
   | "improveReplyUser"
   | "translationSystem"
   | "translationUser"
+  | "translationInPlaceSystem"
+  | "translationInPlaceUser"
   | "summarySystem"
   | "summaryUser"
   | "chatSystem"
@@ -79,6 +82,18 @@ export const PROMPT_TEMPLATE_DEFINITIONS: PromptTemplateDefinition[] = [
     label: "Translate - user",
     description: "Instructions and text for translation.",
     placeholders: ["target_language", "text"],
+  },
+  {
+    key: "translationInPlaceSystem",
+    label: "Translate in place - system",
+    description: "High-level behavior for segment-based in-place translation.",
+    placeholders: ["target_language"],
+  },
+  {
+    key: "translationInPlaceUser",
+    label: "Translate in place - user",
+    description: "Instructions and JSON payload of text segments for in-place translation.",
+    placeholders: ["target_language", "payload"],
   },
   {
     key: "summarySystem",
@@ -165,6 +180,18 @@ export const DEFAULT_PROMPT_TEMPLATES: PromptTemplates = {
     "- Keep the same level of politeness/professional register.\n" +
     "- Do not include commentary, explanations, or notes.\n\n" +
     "Content:\n{{text}}",
+  translationInPlaceSystem:
+    "You are a translation engine for email UI strings. Input is JSON. " +
+    "Return ONLY a JSON object with EXACTLY the same keys, each value an array with EXACTLY the same number of strings. " +
+    "Translate each string into {{target_language}} naturally and idiomatically. " +
+    "Never add/remove/reorder keys or array elements. " +
+    "Never include HTML, markdown, code fences, backticks, entity references (&...;) or commentary — raw strings only (JSON handles escaping). " +
+    "Keep names, numbers, dates, URLs, email addresses, code tokens and placeholder-like tokens exactly. " +
+    "Preserve capitalization style where natural. An empty string stays empty.",
+  translationInPlaceUser:
+    "Translate every string in the JSON payload below to {{target_language}} and return ONLY the JSON object " +
+    "with identical keys and array lengths.\n\n" +
+    "Payload:\n{{payload}}",
   summarySystem:
     "You are a chief-of-staff style summarization assistant for business email threads. " +
     "Prioritize decision relevance, ownership, deadlines, and risks. " +
@@ -363,6 +390,42 @@ export function buildTranslationMessages(
       content: renderTemplate(merged.translationUser, {
         target_language: targetLanguage,
         text: limitedText,
+      }),
+    },
+  ];
+}
+
+export function buildInPlaceTranslationMessages(
+  batch: BodyDomSegment[],
+  targetLanguage: string,
+  templates: PromptTemplates,
+  extra?: Record<string, string[]>
+): ChatMessage[] {
+  const merged = mergePromptTemplates(templates);
+  const segments: Record<string, string[]> = {};
+  for (const segment of batch) {
+    segments[segment.id] = segment.parts;
+  }
+  if (extra) {
+    for (const [key, value] of Object.entries(extra)) {
+      segments[key] = value;
+    }
+  }
+
+  const payload = JSON.stringify({ target_language: targetLanguage, segments });
+
+  return [
+    {
+      role: "system",
+      content: renderTemplate(merged.translationInPlaceSystem, {
+        target_language: targetLanguage,
+      }),
+    },
+    {
+      role: "user",
+      content: renderTemplate(merged.translationInPlaceUser, {
+        target_language: targetLanguage,
+        payload,
       }),
     },
   ];

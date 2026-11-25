@@ -37,6 +37,7 @@ import {
   buildReplyDraftMessages,
   buildSummaryMessages,
   buildTranslationMessages,
+  buildInPlaceTranslationMessages,
   buildSubjectLineMessages,
   buildActionItemsMessages,
   buildCustomPresetMessages,
@@ -79,6 +80,13 @@ import {
 import { ResultDialogOutgoingMessage, ResultDialogPayload } from "../../shared/dialogMessages";
 import { containsHtmlMarkup, formatStructuredTextAsHtml } from "../../shared/richText";
 import { computeWordDiff, formatDiffAsHtml } from "../../shared/diffUtils";
+import {
+  applySegmentTranslations,
+  buildSegmentBatches,
+  parseMailBodyHtml,
+  serializeMailBody,
+} from "../../shared/bodyDom";
+import type { BodyDomSegment } from "../../shared/bodyDom";
 
 export interface AppProps {
   title: string;
@@ -91,6 +99,7 @@ type Workflow =
   | "improveDraft"
   | "improveReplyDraft"
   | "translate"
+  | "translateInPlace"
   | "summary"
   | "actionItems"
   | `preset:${string}`;
@@ -114,6 +123,118 @@ type ResultHistoryEntry = {
 const RESULT_HISTORY_STORAGE_KEY = "outlookAiAssistant.resultHistoryByItem";
 const MAX_HISTORY_PER_ITEM = 20;
 const MAX_HISTORY_ITEMS = 80;
+const TRANSLATION_UNDO_STORAGE_KEY = "outlookAiAssistant.translationUndo";
+
+const IN_PLACE_RETRY_SUFFIX =
+  "Your previous response was not valid JSON with matching keys/array lengths. Return ONLY the corrected JSON object.";
+
+type TranslationUndoSnapshot = {
+  itemId: string;
+  originalHtml: string;
+  createdAt: string;
+};
+
+function loadTranslationUndoSnapshot(): TranslationUndoSnapshot | null {
+  try {
+    const raw = window.localStorage.getItem(TRANSLATION_UNDO_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = JSON.parse(raw) as TranslationUndoSnapshot;
+    if (!parsed || typeof parsed !== "object" || typeof parsed.originalHtml !== "string") {
+      return null;
+    }
+
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function saveTranslationUndoSnapshot(snapshot: TranslationUndoSnapshot): void {
+  try {
+    window.localStorage.setItem(TRANSLATION_UNDO_STORAGE_KEY, JSON.stringify(snapshot));
+  } catch {
+    // Ignore persistence failures; restore will simply be unavailable.
+  }
+}
+
+function extractJsonObjectText(raw: string): string {
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const candidate = (fenced ? fenced[1] : raw).trim();
+  const start = candidate.indexOf("{");
+  const end = candidate.lastIndexOf("}");
+  if (start < 0 || end <= start) {
+    return "";
+  }
+
+  return candidate.slice(start, end + 1);
+}
+
+function parseInPlaceTranslationResponse(
+  raw: string,
+  batch: BodyDomSegment[],
+  extra?: Record<string, string[]>
+): { mapping: Record<string, string[]>; invalidIds: string[] } {
+  // Validation rules: the response must be a JSON object containing every sent
+  // id (segments + extras), each mapped to a string array of the same length,
+  // with no injected markup (<tag) inside translated strings. Invalid ids keep
+  // their original text.
+  const expected: Record<string, string[]> = {};
+  for (const segment of batch) {
+    expected[segment.id] = segment.parts;
+  }
+  if (extra) {
+    for (const [key, value] of Object.entries(extra)) {
+      expected[key] = value;
+    }
+  }
+
+  const jsonText = extractJsonObjectText(raw);
+  if (!jsonText) {
+    return { mapping: {}, invalidIds: Object.keys(expected) };
+  }
+
+  let parsedResponse: unknown;
+  try {
+    parsedResponse = JSON.parse(jsonText);
+  } catch {
+    return { mapping: {}, invalidIds: Object.keys(expected) };
+  }
+
+  if (!parsedResponse || typeof parsedResponse !== "object" || Array.isArray(parsedResponse)) {
+    return { mapping: {}, invalidIds: Object.keys(expected) };
+  }
+
+  const responseRecord = parsedResponse as Record<string, unknown>;
+  const mapping: Record<string, string[]> = {};
+  const invalidIds: string[] = [];
+
+  for (const [id, parts] of Object.entries(expected)) {
+    const value = responseRecord[id];
+    if (Array.isArray(value) && value.length === parts.length) {
+      let valid = true;
+      const strings: string[] = [];
+      for (const entry of value) {
+        if (typeof entry !== "string" || /<[a-zA-Z/!]/.test(entry)) {
+          valid = false;
+          break;
+        }
+        strings.push(entry);
+      }
+
+      if (valid) {
+        mapping[id] = strings;
+        continue;
+      }
+    }
+
+    invalidIds.push(id);
+  }
+
+  return { mapping, invalidIds };
+}
 
 const QUICK_REPLY_INTENTS = [
   {
@@ -179,6 +300,14 @@ const workflowDefinitions: Array<{
     shortLabel: "Translate",
     iconName: "LocaleLanguage",
     hostModes: ["compose", "read"],
+  },
+  {
+    key: "translateInPlace",
+    label:
+      "Translate the full message in place — formatting, links and images are preserved (read mode shows the translated copy in the result dialog)",
+    shortLabel: "In-place",
+    iconName: "LocaleLanguage",
+    hostModes: ["read", "compose"],
   },
   {
     key: "summary",
@@ -394,6 +523,10 @@ function getWorkflowLabel(workflow: Workflow, customPresets?: CustomPreset[]): s
     return "Translate";
   }
 
+  if (workflow === "translateInPlace") {
+    return "Translate in place";
+  }
+
   if (workflow.startsWith("preset:")) {
     const presetId = workflow.slice(7);
     const found = customPresets?.find((p) => p.id === presetId);
@@ -477,6 +610,8 @@ export default function App(props: AppProps) {
   const [isEditingNewPreset, setIsEditingNewPreset] = React.useState<boolean>(false);
   const [presetEditorError, setPresetEditorError] = React.useState<string>("");
   const [detectedEmailLanguage, setDetectedEmailLanguage] = React.useState<string>("");
+  const [translationRestoreAvailable, setTranslationRestoreAvailable] =
+    React.useState<boolean>(false);
 
 
 
@@ -667,6 +802,16 @@ export default function App(props: AppProps) {
       setSelectedHistoryEntryId(currentItemHistory[0].id);
     }
   }, [currentItemHistory, selectedHistoryEntryId]);
+
+  React.useEffect(() => {
+    // The restore action only applies to the item whose body was replaced;
+    // ItemChanged updates currentItemId and hides it for other items.
+    const snapshot = loadTranslationUndoSnapshot();
+    const snapshotMatchesItem =
+      snapshot !== null &&
+      (!snapshot.itemId || !currentItemId || snapshot.itemId === currentItemId);
+    setTranslationRestoreAvailable(hostMode === "compose" && snapshotMatchesItem);
+  }, [currentItemId, hostMode]);
 
   React.useEffect(() => {
     const applyTheme = () => {
@@ -1818,6 +1963,139 @@ export default function App(props: AppProps) {
         );
       }
 
+      if (activeWorkflow === "translateInPlace") {
+        const bodyHtml = await getCurrentBodyHtml();
+        if (!bodyHtml.trim()) {
+          throw new Error("No email body found to translate.");
+        }
+
+        const parsedBody = parseMailBodyHtml(bodyHtml);
+        if (!parsedBody || parsedBody.segments.length === 0) {
+          showToast("Nothing translatable found.");
+          setStatus("Nothing translatable found.");
+          return;
+        }
+
+        const batches = buildSegmentBatches(parsedBody.segments, 4000);
+        const subject = await getEmailSubject();
+        const firstBatchExtra = subject.trim() ? { subject: [subject.trim()] } : undefined;
+
+        // One controller across all batches keeps Cancel/Escape working, and
+        // passing it as an override suppresses raw-JSON streaming in the UI —
+        // progress is shown via status text only.
+        const translationController = new AbortController();
+        setStreamingResultText("");
+
+        const mapping: Record<string, string[]> = {};
+        const keptOriginalIds: string[] = [];
+
+        for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+          const batch = batches[batchIndex];
+          setStatus(
+            batches.length > 1
+              ? `Translating part ${batchIndex + 1}/${batches.length}...`
+              : `Translating message to ${targetLanguage}...`
+          );
+
+          const extra = batchIndex === 0 ? firstBatchExtra : undefined;
+          let messages = buildInPlaceTranslationMessages(
+            batch,
+            targetLanguage,
+            config.promptTemplates,
+            extra
+          );
+          let batchMapping: Record<string, string[]> | null = null;
+          let invalidIds: string[] = [];
+
+          for (let attempt = 0; attempt < 2; attempt++) {
+            activeRequestControllerRef.current = translationController;
+            setHasActiveRequest(true);
+            const output = await runAi(messages, undefined, translationController);
+            const validation = parseInPlaceTranslationResponse(output, batch, extra);
+            batchMapping = validation.mapping;
+            invalidIds = validation.invalidIds;
+
+            if (invalidIds.length === 0) {
+              break;
+            }
+
+            if (attempt === 0) {
+              // One corrective retry for malformed JSON or mismatched structure.
+              messages = [
+                messages[0],
+                {
+                  ...messages[1],
+                  content: `${messages[1].content}\n\n${IN_PLACE_RETRY_SUFFIX}`,
+                },
+              ];
+            }
+          }
+
+          // Partial results are better than none: keep originals only for ids
+          // that failed validation in both attempts.
+          if (batchMapping) {
+            Object.assign(mapping, batchMapping);
+          }
+          keptOriginalIds.push(...invalidIds);
+        }
+
+        const translatedSubject = mapping.subject && mapping.subject.length > 0
+          ? mapping.subject[0]
+          : "";
+        delete mapping.subject;
+
+        const applyResult = applySegmentTranslations(parsedBody, mapping);
+        const translatedHtml = serializeMailBody(parsedBody);
+        const failedSegmentCount =
+          keptOriginalIds.filter((id) => id !== "subject").length + applyResult.failed.length;
+
+        if (hostMode === "compose") {
+          // Undo snapshot taken before the write so the original body can be
+          // restored from the taskpane (body HTML is not sensitive).
+          saveTranslationUndoSnapshot({
+            itemId: getCurrentItemIdOrEmpty(),
+            originalHtml: bodyHtml,
+            createdAt: new Date().toISOString(),
+          });
+          setTranslationRestoreAvailable(true);
+          await setComposeBodyHtml(translatedHtml);
+          showToast("✓ Message translated in place.");
+        } else {
+          const noteLines: string[] = [
+            "Translated view — the received message itself is not modified.",
+          ];
+          if (translatedSubject) {
+            noteLines.push(`Subject (translated): ${translatedSubject}`);
+          }
+          if (parsedBody.skippedQuotedChain) {
+            noteLines.push("The quoted reply chain below the message was skipped.");
+          }
+          const noteHtml = `<p>${noteLines
+            .map((line) =>
+              line
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+            )
+            .join("</p><p>")}</p>`;
+
+          await presentResult(
+            createDialogPayload(
+              "Translated message (read-only)",
+              getWorkflowLabel(activeWorkflow),
+              targetLanguage,
+              `${noteHtml}${translatedHtml}`
+            ),
+            activeWorkflow
+          );
+        }
+
+        setStatus(
+          `Translated ${applyResult.applied} segments across ${batches.length} batches` +
+            (failedSegmentCount > 0 ? `; ${failedSegmentCount} kept original.` : ".")
+        );
+      }
+
       if (activeWorkflow.startsWith("preset:")) {
         const presetId = activeWorkflow.slice(7);
         const preset = config.customPresets.find((p) => p.id === presetId);
@@ -2026,6 +2304,25 @@ export default function App(props: AppProps) {
       setStatus("Result inserted at cursor.");
     } catch (error) {
       logError("Insert at cursor failed", error);
+      setError((error as Error).message);
+    }
+  };
+
+  const onRestoreOriginalBody = async () => {
+    try {
+      const snapshot = loadTranslationUndoSnapshot();
+      const currentId = getCurrentItemIdOrEmpty();
+      if (!snapshot || (snapshot.itemId && currentId && snapshot.itemId !== currentId)) {
+        throw new Error("No saved original body for this email.");
+      }
+
+      await setComposeBodyHtml(snapshot.originalHtml);
+      window.localStorage.removeItem(TRANSLATION_UNDO_STORAGE_KEY);
+      setTranslationRestoreAvailable(false);
+      setStatus("Original message body restored.");
+      showToast("✓ Original message restored.");
+    } catch (error) {
+      logError("Restore original body failed", error);
       setError((error as Error).message);
     }
   };
@@ -2414,8 +2711,11 @@ export default function App(props: AppProps) {
                 iconProps={{ iconName: definition.iconName }}
                 title={definition.label}
                 onClick={() => {
-                  if (definition.key === "translate" && workflow !== "translate") {
-                    setWorkflow("translate");
+                  if (
+                    (definition.key === "translate" || definition.key === "translateInPlace") &&
+                    workflow !== definition.key
+                  ) {
+                    setWorkflow(definition.key);
                     setStatus("Select target language, then press Translate again to run.");
                     return;
                   }
@@ -2428,6 +2728,20 @@ export default function App(props: AppProps) {
               </DefaultButton>
             ))}
           </div>
+
+          {hostMode === "compose" && translationRestoreAvailable && (
+            <MessageBar messageBarType={MessageBarType.info} isMultiline={false}>
+              <span style={{ marginRight: "8px" }}>
+                Email body was translated in place.
+              </span>
+              <DefaultButton
+                iconProps={{ iconName: "Undo" }}
+                onClick={() => void onRestoreOriginalBody()}
+              >
+                Restore original
+              </DefaultButton>
+            </MessageBar>
+          )}
 
           {config.customPresets.length > 0 && (
             <>
@@ -2545,7 +2859,9 @@ export default function App(props: AppProps) {
             </>
           )}
 
-          {(workflow === "translate" || workflow === "actionItems") && (
+          {(workflow === "translate" ||
+            workflow === "actionItems" ||
+            workflow === "translateInPlace") && (
             <Dropdown
               label="Target language"
               selectedKey={targetLanguage}
