@@ -134,6 +134,14 @@ module.exports = async (env, options) => {
             to: "assets/[name][ext][query]",
           },
           {
+            // Fluent icon subset fonts, served locally. initializeIcons() in
+            // src/taskpane/index.tsx points at assets/ so icons do not depend
+            // on the Fluent CDN (res.cdn.office.net), which the taskpane CSP
+            // blocks - CDN fonts render every icon as an empty square.
+            from: "node_modules/@fluentui/font-icons-mdl2/fonts/*.woff",
+            to: "assets/[name][ext]",
+          },
+          {
             from: "manifest*.xml",
             to: "[name]" + "[ext]",
             transform(content) {

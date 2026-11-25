@@ -13,7 +13,7 @@ declare const __TASKPANE_BUILD_ID__: string;
 
 (window as any).__taskpaneEntryRan = "entry-ran";
 
-initializeIcons();
+initializeIcons("assets/");
 
 let isOfficeInitialized = false;
 

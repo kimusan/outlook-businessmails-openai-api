@@ -30,7 +30,7 @@ export const DEFAULT_CUSTOM_PRESETS: CustomPreset[] = [
     id: "executive-brief",
     label: "Executive Brief",
     shortLabel: "Exec Brief",
-    iconName: "Briefcase",
+    iconName: "Suitcase",
     description:
       "Ultra-concise bulleted briefing for leadership highlighting decision impact, risks, and next steps.",
     systemPrompt:
