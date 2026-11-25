@@ -1,3 +1,4 @@
+import "./boot-marker";
 import App from "./components/App";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { AppContainer } from "react-hot-loader";
@@ -9,6 +10,8 @@ import * as ReactDOM from "react-dom";
 /* global document, Office, module, require */
 
 declare const __TASKPANE_BUILD_ID__: string;
+
+(window as any).__taskpaneEntryRan = "entry-ran";
 
 initializeIcons();
 
@@ -24,8 +27,13 @@ const title = "Outlook AI Assistant by Kim Schulz";
 const bootStatus = document.getElementById("boot-status");
 let reactMounted = false;
 
+// Route startup messages through the boot-report probe when present so the
+// probe's log and the bundle's messages form one timeline in the placeholder.
 const showBootStatus = (message: string) => {
-  if (bootStatus && !reactMounted) {
+  const bootReport = (window as any).__bootReport;
+  if (typeof bootReport === "function") {
+    bootReport(message);
+  } else if (bootStatus && !reactMounted) {
     bootStatus.textContent = message;
   }
 };
@@ -77,6 +85,7 @@ const render = (Component) => {
     document.getElementById("container")
   );
   reactMounted = true;
+  (window as any).__taskpaneMounted = true;
 };
 
 /* Render application after Office initializes */

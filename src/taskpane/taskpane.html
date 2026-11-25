@@ -9,6 +9,11 @@
     <meta http-equiv="X-UA-Compatible" content="IE=Edge" />
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://appsforoffice.microsoft.com; style-src 'self' 'unsafe-inline' https://static2.sharepointonline.com; font-src 'self' https://static2.sharepointonline.com data:; img-src * data: blob:; connect-src *; frame-src 'self'" />
     <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <!-- Boot diagnostics: ES5 probe that reports startup failures in the
+         placeholder. Must load before office.js and the bundle. -->
+    <script src="./boot-report.js"></script>
+
     <title>Outlook AI Assistant by Kim Schulz</title>
 
     <!-- Office JavaScript API -->
