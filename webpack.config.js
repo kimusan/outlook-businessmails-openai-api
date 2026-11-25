@@ -4,10 +4,27 @@ const path = require("path");
 const devCerts = require("office-addin-dev-certs");
 const CopyWebpackPlugin = require("copy-webpack-plugin");
 const HtmlWebpackPlugin = require("html-webpack-plugin");
-const webpack = require("webpack");
 
 const urlDev = "https://localhost:3000/";
-const urlProd = process.env.ADDIN_BASE_URL || urlDev;
+
+function normalizeBaseUrl(raw) {
+  if (!raw) {
+    return urlDev;
+  }
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch (err) {
+    throw new Error(`Invalid ADDIN_BASE_URL "${raw}": it must be a valid http(s) URL.`);
+  }
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    throw new Error(`Invalid ADDIN_BASE_URL "${raw}": only http:// and https:// URLs are supported.`);
+  }
+  // Normalize to exactly one trailing slash so "https://ai.example.com" works like "https://ai.example.com/".
+  return parsed.href.endsWith("/") ? parsed.href : parsed.href + "/";
+}
+
+const urlProd = normalizeBaseUrl(process.env.ADDIN_BASE_URL);
 
 async function getHttpsOptions() {
   const httpsOptions = await devCerts.getHttpsServerOptions();
@@ -17,7 +34,13 @@ async function getHttpsOptions() {
 module.exports = async (env, options) => {
   const dev = options.mode === "development";
   const taskpaneEntry = ["./src/taskpane/index.tsx", "./src/taskpane/taskpane.html"];
-  const taskpaneLoaders = ["ts-loader"];
+  // transpileOnly: type-checking is done separately via `npx tsc --noEmit`.
+  const taskpaneLoaders = [
+    {
+      loader: "ts-loader",
+      options: { transpileOnly: true },
+    },
+  ];
 
   if (dev) {
     taskpaneEntry.unshift("react-hot-loader/patch");
@@ -28,7 +51,6 @@ module.exports = async (env, options) => {
     devtool: "source-map",
     entry: {
       polyfill: ["core-js/stable", "regenerator-runtime/runtime"],
-      vendor: ["react", "react-dom", "core-js", "@fluentui/react"],
       taskpane: taskpaneEntry,
       resultDialog: "./src/dialog/resultDialog.ts",
       commands: "./src/commands/commands.ts",
@@ -43,16 +65,6 @@ module.exports = async (env, options) => {
     },
     module: {
       rules: [
-        {
-          test: /\.ts$/,
-          exclude: /node_modules/,
-          use: {
-            loader: "babel-loader",
-            options: {
-              presets: ["@babel/preset-typescript"],
-            },
-          },
-        },
         {
           test: /\.tsx?$/,
           exclude: /node_modules/,
@@ -85,9 +97,15 @@ module.exports = async (env, options) => {
             transform(content) {
               if (dev) {
                 return content;
-              } else {
-                return content.toString().replace(new RegExp(urlDev, "g"), urlProd);
               }
+              // Replace the trailing-slash form first, then the bare form
+              // (manifest.xml AppDomain has no trailing slash).
+              return content
+                .toString()
+                .split(urlDev)
+                .join(urlProd)
+                .split(urlDev.replace(/\/$/, ""))
+                .join(urlProd.replace(/\/$/, ""));
             },
           },
         ],
@@ -95,7 +113,7 @@ module.exports = async (env, options) => {
       new HtmlWebpackPlugin({
         filename: "taskpane.html",
         template: "./src/taskpane/taskpane.html",
-        chunks: ["taskpane", "vendor", "polyfill"],
+        chunks: ["taskpane", "polyfill"],
       }),
       new HtmlWebpackPlugin({
         filename: "commands.html",
@@ -106,9 +124,6 @@ module.exports = async (env, options) => {
         filename: "result-dialog.html",
         template: "./src/dialog/resultDialog.html",
         chunks: ["resultDialog", "polyfill"],
-      }),
-      new webpack.ProvidePlugin({
-        Promise: ["es6-promise", "Promise"],
       }),
     ],
     devServer: {
