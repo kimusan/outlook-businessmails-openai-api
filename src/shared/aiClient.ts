@@ -235,79 +235,28 @@ export function getTokenRefreshEndpoint(config: AiServiceConfig): string {
   return joinBaseUriAndPath(config.baseUri, config.tokenRefreshPath);
 }
 
-const TOKEN_CACHE_STORAGE_PREFIX = "outlookAiAssistant.tokenCache.";
-const TOKEN_CACHE_TTL_MS = 25 * 60 * 1000; // 25 minutes
-
 function buildCacheKey(config: AiServiceConfig): string {
   return `${config.baseUri.trim()}::${config.tokenRefreshPath.trim()}::${config.umsToken.trim()}`;
 }
 
+// The access token is cached in memory only. It is never persisted to
+// window.sessionStorage or any other storage so a leaked storage entry cannot
+// outlive the add-in session.
 function getCachedAccessToken(config: AiServiceConfig): string | null {
-  const key = buildCacheKey(config);
-  const memoryCached = accessTokenCache.get(key);
+  const memoryCached = accessTokenCache.get(buildCacheKey(config));
   if (memoryCached && memoryCached.trim()) {
     return memoryCached;
-  }
-
-  try {
-    if (typeof window !== "undefined" && window.sessionStorage) {
-      const storageKey = `${TOKEN_CACHE_STORAGE_PREFIX}${key}`;
-      const raw = window.sessionStorage.getItem(storageKey);
-      if (raw) {
-        const entry = JSON.parse(raw) as { token?: string; expiresAt?: number };
-        if (
-          entry &&
-          typeof entry.token === "string" &&
-          entry.token.trim() &&
-          typeof entry.expiresAt === "number" &&
-          Date.now() < entry.expiresAt
-        ) {
-          const validToken = entry.token.trim();
-          accessTokenCache.set(key, validToken);
-          return validToken;
-        }
-        window.sessionStorage.removeItem(storageKey);
-      }
-    }
-  } catch {
-    // Ignore storage read failures.
   }
 
   return null;
 }
 
 function cacheAccessToken(config: AiServiceConfig, accessToken: string): void {
-  const key = buildCacheKey(config);
-  const trimmed = accessToken.trim();
-  accessTokenCache.set(key, trimmed);
-
-  try {
-    if (typeof window !== "undefined" && window.sessionStorage) {
-      const storageKey = `${TOKEN_CACHE_STORAGE_PREFIX}${key}`;
-      window.sessionStorage.setItem(
-        storageKey,
-        JSON.stringify({
-          token: trimmed,
-          expiresAt: Date.now() + TOKEN_CACHE_TTL_MS,
-        })
-      );
-    }
-  } catch {
-    // Ignore storage write failures.
-  }
+  accessTokenCache.set(buildCacheKey(config), accessToken.trim());
 }
 
 export function clearCachedAccessToken(config: AiServiceConfig): void {
-  const key = buildCacheKey(config);
-  accessTokenCache.delete(key);
-
-  try {
-    if (typeof window !== "undefined" && window.sessionStorage) {
-      window.sessionStorage.removeItem(`${TOKEN_CACHE_STORAGE_PREFIX}${key}`);
-    }
-  } catch {
-    // Ignore storage clear failures.
-  }
+  accessTokenCache.delete(buildCacheKey(config));
 }
 
 function truncateForLog(input: string, maxLength: number): string {
@@ -597,7 +546,7 @@ function isAbortError(error: unknown): boolean {
 
   const name = (candidate.name || "").toLowerCase();
   const message = (candidate.message || "").toLowerCase();
-  return name === "aborterror" || message.includes("aborted") || message.includes("canceled");
+  return name === "aborterror" || message.includes("aborted") || message.includes("cancel");
 }
 
 function extractModelId(item: string | ModelListItem): string | null {
@@ -1408,12 +1357,56 @@ async function executeChatCompletionRequest(
   let streamedResult: StreamedChatCompletionParseResult | null = null;
 
   if (isSseStream && response.body && typeof response.body.getReader === "function") {
+    if (!response.ok) {
+      const errorBody = await parseResponseBody(response);
+      let errorPayload: ChatCompletionResponse | null = null;
+      try {
+        errorPayload = errorBody ? (JSON.parse(errorBody) as ChatCompletionResponse) : null;
+      } catch {
+        errorPayload = null;
+      }
+      const streamedErrorResult = parseStreamedChatCompletionBody(errorBody);
+      const errorMessage =
+        errorPayload?.error?.message ||
+        streamedErrorResult?.errorMessage ||
+        `Request failed with status ${response.status}`;
+      throw new AiClientError(errorMessage, {
+        operation: "chatCompletion",
+        url: chatCompletionEndpoint,
+        method: "POST",
+        requestHeaders: requestAttempt.requestHeaders,
+        requestBody: requestAttempt.requestBody,
+        fetchMode: requestAttempt.fetchMode,
+        fetchCredentials: requestAttempt.fetchCredentials,
+        usedLocalProxy: requestAttempt.usedLocalProxy,
+        localProxyUrl: requestAttempt.localProxyUrl,
+        proxyTargetUrl: requestAttempt.proxyTargetUrl,
+        status: response.status,
+        statusText: response.statusText,
+        responseHeaders: requestAttempt.responseHeaders,
+        responseBody: truncateForLog(errorBody, 4000),
+        networkDiagnostics: requestAttempt.networkDiagnostics,
+        requestAttempts,
+        requestPayloadSummary: {
+          model: requestPayload.model,
+          temperature: requestPayload.temperature,
+          messageCount: requestPayload.messages.length,
+          responseContentType,
+          streamDetected: true,
+        },
+      });
+    }
+
     emitChatProgress(options, "streamDetected", {});
     const reader = response.body.getReader();
     const decoder = new TextDecoder("utf-8");
     let buffer = "";
     let accumulatedContent = "";
     let rawText = "";
+    // rawText is only kept for the whole-stream-was-JSON fallback, so cap it to
+    // avoid holding (and JSON.parsing) the entire body in memory next to the
+    // parsed accumulation. Oversized streams simply skip that fallback.
+    const rawTextMaxChars = 256 * 1024;
 
     try {
       while (true) {
@@ -1423,7 +1416,8 @@ async function executeChatCompletionRequest(
           } catch {
             // Ignore cancel error
           }
-          break;
+          // Never return the partial accumulated content as a successful result.
+          throw new Error("Request cancelled by user.");
         }
 
         const { done, value } = await reader.read();
@@ -1432,7 +1426,9 @@ async function executeChatCompletionRequest(
         }
 
         const chunkText = decoder.decode(value, { stream: true });
-        rawText += chunkText;
+        if (rawText.length < rawTextMaxChars) {
+          rawText += chunkText;
+        }
         buffer += chunkText;
         const lines = buffer.split(/\r?\n/);
         buffer = lines.pop() || "";
@@ -1531,6 +1527,11 @@ async function executeChatCompletionRequest(
     responseBody = rawText;
   } else {
     responseBody = await parseResponseBody(response);
+    if (options?.signal?.aborted) {
+      // A body read interrupted by abort must not be treated as a complete
+      // response.
+      throw new Error("Request cancelled by user.");
+    }
     streamedResult = parseStreamedChatCompletionBody(responseBody);
     emitChatProgress(options, "responseReceived", {
       status: response.status,
@@ -1624,6 +1625,12 @@ async function executeChatCompletionRequest(
     content = payloadContent || streamContent;
   }
 
+  // Last-line defence for both branches: once the caller aborted, never return
+  // content as a successful result.
+  if (options?.signal?.aborted) {
+    throw new Error("Request cancelled by user.");
+  }
+
   if (!content && streamReasoning) {
     emitChatProgress(options, "reasoningOnlyDetected", {
       reasoningPreview: truncateForLog(streamReasoning, 160),
@@ -1648,6 +1655,9 @@ async function executeChatCompletionRequest(
           return followUpResult.trim();
         }
       } catch (error) {
+        if (options?.signal?.aborted || isAbortError(error)) {
+          throw error;
+        }
         throw new AiClientError(
           "Reasoning-only response was returned and automatic finalization did not produce final content.",
           {
@@ -1753,6 +1763,29 @@ async function executeChatCompletionRequest(
   return cleaned || content.trim();
 }
 
+function shouldFallbackToNonStreaming(error: unknown): boolean {
+  if (isAiClientError(error)) {
+    const details = error.details;
+    if (typeof details.status === "number") {
+      // An HTTP error status means the server answered the streaming request;
+      // retrying it non-streaming would just repeat the same failure.
+      if (details.status >= 400) {
+        return false;
+      }
+      // A 2xx/3xx answer whose content-type was JSON despite stream:true means
+      // the endpoint likely does not support SSE, so a non-streaming retry is
+      // the right recovery.
+      const contentType = (details.responseHeaders?.["content-type"] || "").toLowerCase();
+      return contentType.includes("application/json");
+    }
+    // No HTTP status: the request failed at the network level before any
+    // response (e.g. fetch TypeError wrapped by fetchWithAuth).
+    return details.operation === "chatCompletion";
+  }
+
+  return error instanceof TypeError;
+}
+
 export async function createChatCompletion(
   config: AiServiceConfig,
   messages: ChatMessage[],
@@ -1767,7 +1800,13 @@ export async function createChatCompletion(
       if (options?.signal?.aborted || isAbortError(streamError)) {
         throw streamError;
       }
-      // If streaming failed or model endpoint doesn't support SSE, fallback to standard non-streaming
+      if (!shouldFallbackToNonStreaming(streamError)) {
+        throw streamError;
+      }
+      // Retry non-streaming only when the failure plausibly means SSE is not
+      // supported. onDelta consumers in the app assign the accumulated text
+      // absolutely (they never append deltas), so emitting the complete
+      // non-streaming result below safely replaces any partial streamed text.
       const nonStreamResult = await executeChatCompletionRequest(config, messages, options, false);
       if (options?.onDelta && nonStreamResult) {
         options.onDelta(nonStreamResult, nonStreamResult);
