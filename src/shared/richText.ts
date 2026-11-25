@@ -32,7 +32,7 @@ const FORBIDDEN_TAGS = [
  * be used on href/src of active or navigational elements.
  */
 const ALLOWED_URI_REGEXP =
-  /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|data:image\/):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i;
+  /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|data:image\/):|[^a-z]|[a-z+.-]+(?:[^a-z+.\-:]|$))/i;
 
 DOMPurify.addHook("afterSanitizeAttributes", (node) => {
   if (node.nodeType !== 1 /* ELEMENT_NODE */) {
