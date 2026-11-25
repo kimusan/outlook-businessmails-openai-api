@@ -44,8 +44,7 @@
   "dependencies": {
     "@fluentui/react": "^8.52.3",
     "core-js": "^3.9.1",
-    "es6-promise": "^4.2.8",
-    "openai": "^3.1.0",
+    "dompurify": "^3.5.0",
     "react": "^17.0.2",
     "react-dom": "^17.0.2",
     "regenerator-runtime": "^0.13.7"
@@ -87,7 +86,4 @@
     "webpack-dev-server": "4.7.4"
   },
   "prettier": "office-addin-prettier-config",
-  "browserslist": [
-    "ie 11"
-  ]
 }
