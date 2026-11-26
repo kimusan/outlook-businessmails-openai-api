@@ -148,6 +148,14 @@ const RELEASE_CHECK_STORAGE_KEY = "outlookAiAssistant.releaseCheck";
  * progress in the live view much sooner. */
 const TRANSLATION_BATCH_MAX_SEGMENTS = 30;
 const TRANSLATION_BATCH_MAX_CHARS = 4000;
+/*
+ * Reasoning models otherwise "think" at the server's default effort for
+ * tens of seconds before emitting any output - the dominant part of the
+ * perceived translation latency (an 11-segment mail took ~1 minute).
+ * Translation does not need deep reasoning; dstranslator sends "low" for
+ * the same reason. Endpoints that reject the parameter retry without it.
+ */
+const TRANSLATION_REASONING_EFFORT = "low";
 
 type TranslationUndoSnapshot = {
   itemId: string;
@@ -974,7 +982,8 @@ export default function App(props: AppProps) {
   const runAi = async (
     messages: { role: "system" | "user" | "assistant"; content: string }[],
     onDeltaCustom?: (delta: string, accumulated: string) => void,
-    controllerOverride?: AbortController
+    controllerOverride?: AbortController,
+    requestOptions?: { reasoningEffort?: string }
   ) => {
     const validationError = validateAiServiceConfig(config);
     if (validationError) {
@@ -999,6 +1008,7 @@ export default function App(props: AppProps) {
     try {
       return await createChatCompletion(config, messages, {
         signal: controller.signal,
+        reasoningEffort: requestOptions?.reasoningEffort,
         onDelta: (delta, accumulated) => {
           if (!controllerOverride) {
             setStreamingResultText(accumulated);
@@ -1020,6 +1030,14 @@ export default function App(props: AppProps) {
 
           if (event.stage === "streamDetected") {
             setStatusText("Streaming response from AI...");
+            return;
+          }
+
+          if (event.stage === "reasoningEffortRejected") {
+            appendDebugLog(
+              "Endpoint rejected reasoning_effort; retrying without it",
+              event.detail
+            );
             return;
           }
 
@@ -1412,10 +1430,30 @@ export default function App(props: AppProps) {
         ];
       }
 
-      const output = await runAi(messages, undefined, controller);
+      const attemptStartedAt = Date.now();
+      let sawFirstDelta = false;
+      const output = await runAi(
+        messages,
+        (_delta, _accumulated) => {
+          if (!sawFirstDelta) {
+            sawFirstDelta = true;
+            setStatusText(`Translating to ${targetLanguage} — model responding...`);
+          }
+        },
+        controller,
+        { reasoningEffort: TRANSLATION_REASONING_EFFORT }
+      );
       const validation = parseInPlaceTranslationResponse(output, currentBatch, currentExtra);
       Object.assign(mapping, validation.mapping);
       invalidIds = validation.invalidIds;
+      appendDebugLog("In-place translation: batch request completed", {
+        attempt,
+        segments: currentBatch.length,
+        durationMs: Date.now() - attemptStartedAt,
+        firstDeltaSeen: sawFirstDelta,
+        mappedIds: Object.keys(validation.mapping).length,
+        invalidIds: invalidIds.length,
+      });
 
       if (invalidIds.length === 0) {
         break;
@@ -2039,6 +2077,7 @@ export default function App(props: AppProps) {
       }
 
       if (activeWorkflow === "translate" && !translateSelectionHandled) {
+        const translationFlowStartedAt = Date.now();
         const bodyHtml = await getCurrentBodyHtml();
         if (!bodyHtml.trim()) {
           throw new Error("No email body found to translate.");
@@ -2167,6 +2206,11 @@ export default function App(props: AppProps) {
 
           translationViewStateRef.current = { view: viewPayload, latestUpdate: null };
           await openOrUpdateResultDialog(viewPayload);
+          appendDebugLog("In-place translation: mail copy ready, starting batches", {
+            prepMs: Date.now() - translationFlowStartedAt,
+            segments: parsedBody.segments.length,
+            batches: batches.length,
+          });
 
           // Bounded-parallel workers pull batches from a shared cursor. Each
           // finished batch is applied to the dialog's mail copy right away;

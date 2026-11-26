@@ -177,6 +177,7 @@ export type ChatCompletionProgressStage =
   | "requestStarted"
   | "responseReceived"
   | "streamDetected"
+  | "reasoningEffortRejected"
   | "reasoningOnlyDetected"
   | "reasoningFollowUpStarted"
   | "reasoningFollowUpCompleted"
@@ -194,6 +195,14 @@ export interface CreateChatCompletionOptions {
   allowReasoningFollowUp?: boolean;
   allowFinalAnswerCleanup?: boolean;
   signal?: AbortSignalLike;
+  /*
+   * OpenAI-style reasoning_effort ("low" | "medium" | "high"). Reasoning
+   * models otherwise run at the server's default effort, which can spend
+   * tens of seconds "thinking" before any output - very visible latency
+   * for translation batches, which do not need deep reasoning. Servers
+   * that reject the parameter (HTTP 400) are retried once without it.
+   */
+  reasoningEffort?: string;
 }
 
 const accessTokenCache = new Map<string, string>();
@@ -1316,17 +1325,27 @@ async function executeChatCompletionRequest(
 ): Promise<string> {
   const chatCompletionEndpoint = getChatCompletionEndpoint(config);
   const processedMessages = config.systemPromptFirst ? ensureSystemPromptFirst(messages) : messages;
-  const requestPayload = {
+  const requestPayload: {
+    model: string;
+    temperature: number;
+    stream: boolean;
+    messages: ChatMessage[];
+    reasoning_effort?: string;
+  } = {
     model: config.model,
     temperature: config.temperature,
     stream: isStreaming,
     messages: processedMessages,
   };
+  if (options?.reasoningEffort) {
+    requestPayload.reasoning_effort = options.reasoningEffort;
+  }
 
   emitChatProgress(options, "requestStarted", {
     model: requestPayload.model,
     messageCount: requestPayload.messages.length,
     stream: isStreaming,
+    reasoningEffort: options?.reasoningEffort || null,
   });
 
   const { response, requestAttempt, requestAttempts } = await fetchWithAuth(
@@ -1793,9 +1812,36 @@ export async function createChatCompletion(
 ): Promise<string> {
   const isStreaming = typeof options?.onDelta === "function";
 
+  const executeWithReasoningEffortFallback = async (streaming: boolean): Promise<string> => {
+    try {
+      return await executeChatCompletionRequest(config, messages, options, streaming);
+    } catch (requestError) {
+      if (
+        options?.reasoningEffort &&
+        isAiClientError(requestError) &&
+        requestError.details?.status === 400 &&
+        /reasoning_effort/i.test(requestError.details?.responseBody || "")
+      ) {
+        // Endpoint does not know the parameter; retry once without it
+        // (mirrors dstranslator's response_format fallback).
+        const { reasoningEffort, ...optionsWithoutEffort } = options;
+        emitChatProgress(options, "reasoningEffortRejected", {
+          reasoningEffort,
+        });
+        return await executeChatCompletionRequest(
+          config,
+          messages,
+          optionsWithoutEffort,
+          streaming
+        );
+      }
+      throw requestError;
+    }
+  };
+
   if (isStreaming) {
     try {
-      return await executeChatCompletionRequest(config, messages, options, true);
+      return await executeWithReasoningEffortFallback(true);
     } catch (streamError) {
       if (options?.signal?.aborted || isAbortError(streamError)) {
         throw streamError;
@@ -1807,7 +1853,7 @@ export async function createChatCompletion(
       // supported. onDelta consumers in the app assign the accumulated text
       // absolutely (they never append deltas), so emitting the complete
       // non-streaming result below safely replaces any partial streamed text.
-      const nonStreamResult = await executeChatCompletionRequest(config, messages, options, false);
+      const nonStreamResult = await executeWithReasoningEffortFallback(false);
       if (options?.onDelta && nonStreamResult) {
         options.onDelta(nonStreamResult, nonStreamResult);
       }
@@ -1815,5 +1861,5 @@ export async function createChatCompletion(
     }
   }
 
-  return await executeChatCompletionRequest(config, messages, options, false);
+  return await executeWithReasoningEffortFallback(false);
 }
