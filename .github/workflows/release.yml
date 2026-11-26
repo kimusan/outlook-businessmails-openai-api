@@ -1,0 +1,81 @@
+# Builds and publishes a GitHub release whenever a version tag (vX.Y.Z) is
+# pushed. The produced artifact is the same local-deployment zip the manual
+# flow creates (npm run package:local:win:zip): the SEA-packaged
+# OutlookAiLocalHost.exe with the freshly built web bundle in www/, manifest,
+# certs and install scripts.
+#
+# The tag must equal the package.json version (e.g. tag v0.1.0 for
+# "version": "0.1.0") - the add-in's in-pane update check compares its
+# package.json version against GitHub release tags, so a mismatched tag would
+# either show a wrong version or never notify. The verification step fails
+# the build on mismatch.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          # LTS; the SEA blob and the exe are built from the same runner
+          # Node, so they are internally consistent regardless of the
+          # version chosen here.
+          node-version: 24
+          cache: npm
+
+      - name: Verify tag matches package.json version
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          version="v$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$version" ]; then
+            echo "::error::Tag $tag does not match package.json version $version. Bump \"version\" in package.json before tagging."
+            exit 1
+          fi
+          echo "Tag $tag matches package.json version."
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build web bundle and package the local-host release zip
+        run: npm run package:local:win:zip
+
+      - name: Create GitHub release and upload the zip
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          zip="release/outlook-ai-local-host-v${version}.zip"
+          if [ ! -f "$zip" ]; then
+            echo "::error::Expected artifact $zip not found."
+            ls release/
+            exit 1
+          fi
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag already exists (re-run); uploading artifact with --clobber."
+            gh release upload "$tag" "$zip" --clobber
+          else
+            gh release create "$tag" "$zip" --title "$tag" --generate-notes
+          fi
