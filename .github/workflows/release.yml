@@ -15,7 +15,11 @@ name: Release
 on:
   push:
     tags:
-      - "v[0-9]+.[0-9]+.[0-9]+"
+      # GitHub filter patterns have NO regex "+" quantifier - "v[0-9]+..."
+      # matches literal "+" and never fires. Use the glob-style pattern here;
+      # the strict "tag == package.json vX.Y.Z" check in the verify step
+      # rejects anything sloppy that slips through.
+      - "v[0-9]*.[0-9]*.[0-9]*"
 
 permissions:
   contents: write
