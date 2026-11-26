@@ -174,7 +174,16 @@ module.exports = async (env, options) => {
         chunks: ["resultDialog"],
       }),
     ],
-    devServer: {
+  };
+
+  // The devServer config (and its HTTPS certificate setup) only matters for
+  // `webpack serve`. It MUST NOT be evaluated on production builds: on a
+  // machine without release/local-host/certs, getHttpsOptions() falls back
+  // to office-addin-dev-certs, which installs its CA into the OS trust
+  // store - an interactive PowerShell confirmation on Windows that blocks
+  // forever on headless CI runners (it hung the release job for 6 hours).
+  if (dev || options.https !== undefined) {
+    config.devServer = {
       hot: true,
       headers: {
         "Access-Control-Allow-Origin": "*",
@@ -190,8 +199,8 @@ module.exports = async (env, options) => {
         options: options.https !== undefined ? options.https : await getHttpsOptions(),
       },
       port: process.env.npm_package_config_dev_server_port || 3000,
-    },
-  };
+    };
+  }
 
   return config;
 };
