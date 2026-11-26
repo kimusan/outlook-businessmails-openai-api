@@ -126,6 +126,9 @@ module.exports = async (env, options) => {
     plugins: [
       new webpack.DefinePlugin({
         __TASKPANE_BUILD_ID__: JSON.stringify(getBuildId()),
+        // Own version (package.json "version"), compared against GitHub
+        // release tags (vX.Y.Z) by the update check in the taskpane.
+        __ADDIN_VERSION__: JSON.stringify(require("./package.json").version),
       }),
       new CopyWebpackPlugin({
         patterns: [

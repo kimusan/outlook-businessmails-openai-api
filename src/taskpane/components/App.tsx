@@ -97,6 +97,13 @@ import {
   IN_PLACE_RETRY_SUFFIX,
   parseInPlaceTranslationResponse,
 } from "../../shared/translationProtocol";
+import {
+  fetchNewerRelease,
+  LatestReleaseInfo,
+  RELEASE_CHECK_INTERVAL_MS,
+} from "../../shared/releaseCheck";
+
+declare const __ADDIN_VERSION__: string;
 
 export interface AppProps {
   title: string;
@@ -134,6 +141,7 @@ const RESULT_HISTORY_STORAGE_KEY = "outlookAiAssistant.resultHistoryByItem";
 const MAX_HISTORY_PER_ITEM = 20;
 const MAX_HISTORY_ITEMS = 80;
 const TRANSLATION_UNDO_STORAGE_KEY = "outlookAiAssistant.translationUndo";
+const RELEASE_CHECK_STORAGE_KEY = "outlookAiAssistant.releaseCheck";
 
 /* Segment cap per translation batch: large batch responses get truncated
  * server-side, which fails the whole batch; smaller batches also surface
@@ -664,6 +672,61 @@ export default function App(props: AppProps) {
     return () => {
       isCancelled = true;
     };
+  }, []);
+
+  /*
+   * GitHub update check. Completely silent on every failure (corp network
+   * often blocks GitHub): the banner appears only when a newer release was
+   * actually fetched. Throttled to RELEASE_CHECK_INTERVAL_MS via
+   * localStorage, so the check runs at most every few hours even while the
+   * pane stays open; the hourly timer just gives a long-open pane another
+   * chance after the throttle window passes. The initial check is delayed
+   * so it never competes with startup.
+   */
+  const [availableUpdate, setAvailableUpdate] = React.useState<LatestReleaseInfo | null>(null);
+  React.useEffect(() => {
+    const runThrottledCheck = async () => {
+      try {
+        const raw = window.localStorage.getItem(RELEASE_CHECK_STORAGE_KEY);
+        const stored = raw
+          ? (JSON.parse(raw) as { lastCheckedAt?: number; dismissedVersion?: string })
+          : {};
+        const lastCheckedAt = typeof stored.lastCheckedAt === "number" ? stored.lastCheckedAt : 0;
+        if (Date.now() - lastCheckedAt < RELEASE_CHECK_INTERVAL_MS) {
+          return;
+        }
+        // Record the attempt BEFORE fetching: a hung or slow request must not
+        // retrigger on every timer tick.
+        window.localStorage.setItem(
+          RELEASE_CHECK_STORAGE_KEY,
+          JSON.stringify({ ...stored, lastCheckedAt: Date.now() })
+        );
+
+        const release = await fetchNewerRelease(__ADDIN_VERSION__, window.fetch.bind(window));
+        if (release && release.version !== stored.dismissedVersion) {
+          setAvailableUpdate(release);
+        } else if (!release) {
+          appendDebugLog("GitHub release check: no newer release reachable");
+        }
+      } catch {
+        // Never surface update-check failures in the UI.
+      }
+    };
+
+    const initialTimeout = window.setTimeout(() => {
+      void runThrottledCheck();
+    }, 10000);
+    // While the pane stays open, re-evaluate hourly; the localStorage
+    // throttle does the real rate limiting.
+    const interval = window.setInterval(() => {
+      void runThrottledCheck();
+    }, 60 * 60 * 1000);
+
+    return () => {
+      window.clearTimeout(initialTimeout);
+      window.clearInterval(interval);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   React.useEffect(() => {
@@ -2624,6 +2687,33 @@ export default function App(props: AppProps) {
             />
           </div>
         </div>
+
+        {availableUpdate && (
+          <MessageBar
+            messageBarType={MessageBarType.info}
+            isMultiline={false}
+            onDismiss={() => {
+              const dismissed = availableUpdate;
+              setAvailableUpdate(null);
+              try {
+                const raw = window.localStorage.getItem(RELEASE_CHECK_STORAGE_KEY);
+                const stored = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+                window.localStorage.setItem(
+                  RELEASE_CHECK_STORAGE_KEY,
+                  JSON.stringify({ ...stored, dismissedVersion: dismissed.version })
+                );
+              } catch {
+                // Ignore persistence failures; the banner just reappears later.
+              }
+            }}
+            dismissButtonAriaLabel="Hide update notification"
+          >
+            New version available: <b>v{availableUpdate.version}</b> —{" "}
+            <a href={availableUpdate.url} target="_blank" rel="noopener noreferrer">
+              View release
+            </a>
+          </MessageBar>
+        )}
 
 
 
