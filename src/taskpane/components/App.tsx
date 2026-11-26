@@ -145,9 +145,11 @@ const RELEASE_CHECK_STORAGE_KEY = "outlookAiAssistant.releaseCheck";
 
 /* Segment cap per translation batch: large batch responses get truncated
  * server-side, which fails the whole batch; smaller batches also surface
- * progress in the live view much sooner. */
-const TRANSLATION_BATCH_MAX_SEGMENTS = 30;
-const TRANSLATION_BATCH_MAX_CHARS = 4000;
+ * progress in the live view much sooner. dstranslator caps at 25 segments /
+ * 2000 chars for the same reasons - matching it keeps updates frequent and
+ * small. */
+const TRANSLATION_BATCH_MAX_SEGMENTS = 25;
+const TRANSLATION_BATCH_MAX_CHARS = 2000;
 /*
  * Reasoning models otherwise "think" at the server's default effort for
  * tens of seconds before emitting any output - the dominant part of the
@@ -2216,7 +2218,9 @@ export default function App(props: AppProps) {
           // finished batch is applied to the dialog's mail copy right away;
           // updates carry the full mapping so a message lost before the
           // dialog was ready is healed by the next one.
-          const TRANSLATION_CONCURRENCY = 3;
+          // dstranslator runs 6 workers; matching it doubles the batches in
+          // flight, so the live view updates roughly twice as often.
+          const TRANSLATION_CONCURRENCY = 6;
           const childControllers = new Set<AbortController>();
           const abortChildren = () => {
             for (const child of childControllers) {
